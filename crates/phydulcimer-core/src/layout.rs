@@ -44,12 +44,26 @@ pub struct Position {
     pub midi: u8,
 }
 
-/// バスブリッジのコース数。
+/// バスブリッジのコース数 (**15/14 標準配置の値**。配置ごとの値は
+/// [`Layout::bass_courses`] を使うこと)。
 pub const BASS_COURSES: usize = 14;
-/// トレブルブリッジのコース数。
+/// トレブルブリッジのコース数 (**15/14 標準配置の値**)。
 pub const TREBLE_COURSES: usize = 15;
-/// 発音位置の総数。
+/// 発音位置の総数 (**15/14 標準配置の値**)。
 pub const POSITION_COUNT: usize = BASS_COURSES + TREBLE_COURSES * 2;
+
+/// 配置の種類 (Phase 7)。
+///
+/// 弦バンクの構築時に決まり、途中では切り替えられない (プラグインでは
+/// activate 時に適用する — 弦バンクの再構築 = 確保を伴うため)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LayoutKind {
+    /// 15/14 全音階 (5度間隔チューニング)。44 位置・27 音高、G2–D6
+    #[default]
+    Diatonic1514,
+    /// E3–E6 半音階 37 音 (クロマチックダルシマー)。48 位置
+    ChromaticE3E6,
+}
 
 /// メジャースケールの隣接音程 [半音]。
 const MAJOR_STEPS: [u8; 7] = [2, 2, 1, 2, 2, 2, 1];
@@ -65,41 +79,43 @@ fn diatonic_from(root: u8, count: usize) -> Vec<u8> {
     keys
 }
 
-/// 15/14 の標準配置。
+/// 配置表。
 ///
-/// 位置の並び順は **バス 0–13 → トレブル右 14–28 → トレブル左 29–43**。
+/// 位置の並び順は **バス → トレブル右 → トレブル左** (コース昇順)。
 /// [`Instrument`](crate::instrument::Instrument) はこの順で弦 (区間) を持つ。
 #[derive(Debug, Clone)]
 pub struct Layout {
+    kind: LayoutKind,
     positions: Vec<Position>,
     /// MIDI 鍵 → 優先する位置の添字。未マップは `None`
     preferred: [Option<u16>; 128],
+    bass_courses: usize,
+    treble_courses: usize,
+    key_min: u8,
+    key_max: u8,
 }
 
 impl Layout {
-    pub fn standard_15_14() -> Self {
-        let mut positions = Vec::with_capacity(POSITION_COUNT);
-
-        // バス: G2 (43) から G メジャー 14 音 → F#4 (66)。
-        for (course, midi) in diatonic_from(43, BASS_COURSES).into_iter().enumerate() {
+    /// バス・トレブル右の音列から配置表を組む。左は常に右 +7 半音
+    /// (同じ弦の短い区間 — 共有弦の物理制約。周波数の精密値は
+    /// `scaling` の分割比が決める)。
+    fn from_tables(kind: LayoutKind, bass_keys: &[u8], right_keys: &[u8]) -> Self {
+        let mut positions = Vec::with_capacity(bass_keys.len() + right_keys.len() * 2);
+        for (course, &midi) in bass_keys.iter().enumerate() {
             positions.push(Position {
                 side: BridgeSide::Bass,
                 course,
                 midi,
             });
         }
-        // トレブル右: G3 (55) から G メジャー 15 音 → G5 (79)。
-        let right = diatonic_from(55, TREBLE_COURSES);
-        for (course, &midi) in right.iter().enumerate() {
+        for (course, &midi) in right_keys.iter().enumerate() {
             positions.push(Position {
                 side: BridgeSide::TrebleRight,
                 course,
                 midi,
             });
         }
-        // トレブル左: 同じ弦の 2:3 の短い側 = 完全5度上 (+7 半音)。
-        // D4 (62) から D メジャー 15 音 → D6 (86) になる。
-        for (course, &midi) in right.iter().enumerate() {
+        for (course, &midi) in right_keys.iter().enumerate() {
             positions.push(Position {
                 side: BridgeSide::TrebleLeft,
                 course,
@@ -111,22 +127,95 @@ impl Layout {
         // 「最も長い (低い) 区間を選ぶ」という既定。positions の並びが
         // ちょうどこの順なので、**先勝ち**でよい。
         let mut preferred = [None; 128];
+        let (mut key_min, mut key_max) = (u8::MAX, u8::MIN);
         for (i, p) in positions.iter().enumerate() {
             let slot = &mut preferred[p.midi as usize];
             if slot.is_none() {
                 *slot = Some(i as u16);
             }
+            key_min = key_min.min(p.midi);
+            key_max = key_max.max(p.midi);
         }
 
         Self {
+            kind,
             positions,
             preferred,
+            bass_courses: bass_keys.len(),
+            treble_courses: right_keys.len(),
+            key_min,
+            key_max,
         }
     }
 
-    /// 全発音位置 (44 個)。
+    /// 種類から配置表を作る。
+    pub fn of(kind: LayoutKind) -> Self {
+        match kind {
+            LayoutKind::Diatonic1514 => Self::standard_15_14(),
+            LayoutKind::ChromaticE3E6 => Self::chromatic_e3_e6(),
+        }
+    }
+
+    /// 15/14 の標準配置 (全音階)。
+    ///
+    /// - バス: G2 (43) から G メジャー 14 音 → F#4 (66)
+    /// - トレブル右: G3 (55) から G メジャー 15 音 → G5 (79)
+    /// - トレブル左: +7 半音 → D4 (62)–D6 (86)
+    pub fn standard_15_14() -> Self {
+        Self::from_tables(
+            LayoutKind::Diatonic1514,
+            &diatonic_from(43, BASS_COURSES),
+            &diatonic_from(55, TREBLE_COURSES),
+        )
+    }
+
+    /// E3–E6 の半音階配置 (37 音、クロマチックダルシマー)。
+    ///
+    /// - バス: E3 (52)–D#4 (63) を半音間隔 12 コース
+    /// - トレブル右: E4 (64)–A5 (81) を半音間隔 18 コース
+    /// - トレブル左: +7 半音 → B4 (71)–E6 (88)
+    ///
+    /// **半音列の +7 半音は半音列のまま**なので、共有弦の制約 (左 = 右の
+    /// 5 度上) を保ったまま E3–E6 の 37 音が隙間なく埋まる。重複域
+    /// (B4–A5) は先勝ち規則で右側 (長い区間) が優先される。
+    ///
+    /// 実機のクロマチック (Dusty Strings Chromatic 系) はブリッジの追加で
+    /// 半音を得るが、本モデルは plan.html §配置のとおり「同じ設計則で
+    /// 3 バンクに割り付ける」理想化 (D-017 の解消)。
+    pub fn chromatic_e3_e6() -> Self {
+        let bass: Vec<u8> = (52..=63).collect();
+        let right: Vec<u8> = (64..=81).collect();
+        Self::from_tables(LayoutKind::ChromaticE3E6, &bass, &right)
+    }
+
+    /// 配置の種類。
+    pub fn kind(&self) -> LayoutKind {
+        self.kind
+    }
+
+    /// 全発音位置。
     pub fn positions(&self) -> &[Position] {
         &self.positions
+    }
+
+    /// バスブリッジのコース数。
+    pub fn bass_courses(&self) -> usize {
+        self.bass_courses
+    }
+
+    /// トレブルブリッジのコース数。
+    pub fn treble_courses(&self) -> usize {
+        self.treble_courses
+    }
+
+    /// マップされている最低の鍵。
+    pub fn key_min(&self) -> u8 {
+        self.key_min
+    }
+
+    /// マップされている最高の鍵。
+    pub fn key_max(&self) -> u8 {
+        self.key_max
     }
 
     /// MIDI 鍵に対する優先位置の添字。未マップなら `None`。
@@ -229,6 +318,65 @@ mod tests {
             let chosen = l.positions()[idx];
             assert_eq!(chosen.midi, p.midi);
         }
+    }
+
+    #[test]
+    fn the_chromatic_layout_covers_e3_to_e6_without_gaps() {
+        // P7: 半音階配置。E3 (52)–E6 (88) の 37 音がすべて鳴る。
+        let l = Layout::chromatic_e3_e6();
+        assert_eq!(l.positions().len(), 48);
+        assert_eq!((l.key_min(), l.key_max()), (52, 88));
+        for key in 52..=88u8 {
+            assert!(l.is_mapped(key), "{} が無い", note_name(key));
+        }
+        // 範囲外は無音。
+        assert!(!l.is_mapped(51));
+        assert!(!l.is_mapped(89));
+    }
+
+    #[test]
+    fn the_chromatic_left_side_is_seven_semitones_above_the_right() {
+        // 共有弦の制約: 左は常に右 +7 半音 (半音列なので左も半音列になる)。
+        let l = Layout::chromatic_e3_e6();
+        for course in 0..l.treble_courses() {
+            let find = |side: BridgeSide| {
+                l.positions()
+                    .iter()
+                    .find(|p| p.side == side && p.course == course)
+                    .unwrap()
+                    .midi
+            };
+            assert_eq!(
+                find(BridgeSide::TrebleLeft),
+                find(BridgeSide::TrebleRight) + 7
+            );
+        }
+    }
+
+    #[test]
+    fn chromatic_duplicates_prefer_the_longest_segment() {
+        // 重複域 B4–A5 (71–81) は右側 (長い区間) が優先。
+        let l = Layout::chromatic_e3_e6();
+        for key in 71..=81u8 {
+            let p = l.positions()[l.preferred_index(key).unwrap()];
+            assert_eq!(p.side, BridgeSide::TrebleRight, "{}", note_name(key));
+        }
+        // A#5 (82) 以上は左にしか無い。
+        for key in 82..=88u8 {
+            let p = l.positions()[l.preferred_index(key).unwrap()];
+            assert_eq!(p.side, BridgeSide::TrebleLeft, "{}", note_name(key));
+        }
+    }
+
+    #[test]
+    fn layout_of_matches_the_constructors() {
+        assert_eq!(Layout::of(LayoutKind::Diatonic1514).positions().len(), 44);
+        assert_eq!(Layout::of(LayoutKind::ChromaticE3E6).positions().len(), 48);
+        // 15/14 のフィールド化した値が既存の定数と一致する。
+        let d = Layout::standard_15_14();
+        assert_eq!(d.bass_courses(), BASS_COURSES);
+        assert_eq!(d.treble_courses(), TREBLE_COURSES);
+        assert_eq!((d.key_min(), d.key_max()), (43, 86));
     }
 
     #[test]

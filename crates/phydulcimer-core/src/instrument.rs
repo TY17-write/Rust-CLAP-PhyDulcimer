@@ -10,16 +10,19 @@
 //! - ノートオフに対応する物理が存在しないので、**受け取っても捨てる**
 //! - ホストの停止 (choke / reset) だけが弦を止める
 //!
-//! # 構成 (Phase 4)
+//! # 構成 (Phase 4、配置の切り替えは Phase 7)
 //!
-//! - 発音位置は [`Layout`](crate::layout::Layout) の 15/14 標準配置 (44 位置)
+//! - 発音位置は [`Layout`](crate::layout::Layout) の表から。既定は 15/14
+//!   標準配置 (44 位置)、[`InstrumentConfig`] で E3–E6 半音階 (48 位置) も選べる
 //! - **コースあたり 2 本の弦** ([`course`](crate::course))。2 本目は +1〜2 cent
 //!   デチューンされ、打撃は 0–0.3 ms ばらつく → うなりと立ち上がりの厚み
 //! - **トレブルの弦はブリッジをまたぐ 2 区間が結合している**
 //!   ([`TrebleString`])。片側を叩くと反対側が共鳴する (5度の響き)
-//! - 全音階配置なので、楽器に無い半音の MIDI 鍵は無音 (D-017)
+//! - 15/14 は全音階配置なので、楽器に無い半音の MIDI 鍵は無音 (D-017。
+//!   半音階配置で解消)
 //!
-//! 区間の総数: バス 14 コース × 2 本 + トレブル 15 コース × 2 本 × 2 区間 = **88**。
+//! 区間の総数 (15/14): バス 14 コース × 2 本 + トレブル 15 コース × 2 本 ×
+//! 2 区間 = **88** (半音階は 12 + 18 コースで 96)。
 //!
 //! # まだ無いもの
 //!
@@ -30,8 +33,8 @@ use crate::course::{
     detuned, strike_pair, Strike, TrebleString, STRIKE_SPREAD_MAX_SEC, STRINGS_PER_COURSE,
 };
 use crate::hammer::HammerParams;
-use crate::layout::{BridgeSide, Layout, Position};
-use crate::scaling::design_position;
+use crate::layout::{BridgeSide, Layout, LayoutKind, Position};
+use crate::scaling::{design_position_with, DesignContext, Temperament};
 use crate::segment::Segment;
 use crate::Sample;
 
@@ -53,6 +56,16 @@ fn hammer_speed(velocity: f64) -> f64 {
     0.5 + 5.5 * velocity.clamp(0.0, 1.0)
 }
 
+/// 楽器の構成 (Phase 7) — 配置と音律。
+///
+/// **構築時に決まり、途中では変えられない** (弦バンクの再構築 = 確保を
+/// 伴うため。プラグインでは activate 時に適用する)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct InstrumentConfig {
+    pub layout: LayoutKind,
+    pub temperament: Temperament,
+}
+
 /// バスの 1 コース = 弦 2 本 (発音区間のみ。短い側は見送り、D-018)。
 struct BassCourse {
     strings: [Segment; STRINGS_PER_COURSE],
@@ -70,6 +83,7 @@ struct TrebleCourse {
 /// 全弦バンク。
 pub struct Instrument {
     layout: Layout,
+    config: InstrumentConfig,
     bass: Vec<BassCourse>,
     treble: Vec<TrebleCourse>,
     /// 打弦点 x/L。次の打撃から効く
@@ -83,14 +97,21 @@ pub struct Instrument {
 }
 
 impl Instrument {
-    /// 全弦を構築する。**確保はここだけ** (メインスレッドで呼ぶこと)。
+    /// 全弦を構築する (15/14 標準配置・純正5度)。
     pub fn new(sample_rate: f64) -> Self {
-        let layout = Layout::standard_15_14();
+        Self::with_config(sample_rate, InstrumentConfig::default())
+    }
 
-        let bass = (0..crate::layout::BASS_COURSES)
+    /// 構成 (配置・音律) を指定して全弦を構築する。
+    /// **確保はここだけ** (メインスレッドで呼ぶこと)。
+    pub fn with_config(sample_rate: f64, config: InstrumentConfig) -> Self {
+        let layout = Layout::of(config.layout);
+        let ctx = DesignContext::for_layout(&layout, config.temperament);
+
+        let bass = (0..layout.bass_courses())
             .map(|course| {
                 let p = position_of(&layout, BridgeSide::Bass, course);
-                let (design, damping) = design_position(p);
+                let (design, damping) = design_position_with(p, &ctx);
                 let base = design.segment_params();
                 let cents = crate::course::unison_detune_cents(course);
                 let strings = [base, detuned(base, cents)].map(|params| {
@@ -103,16 +124,15 @@ impl Instrument {
             })
             .collect();
 
-        let treble = (0..crate::layout::TREBLE_COURSES)
+        let treble = (0..layout.treble_courses())
             .map(|course| {
                 let pr = position_of(&layout, BridgeSide::TrebleRight, course);
                 let pl = position_of(&layout, BridgeSide::TrebleLeft, course);
-                let (right_design, damping) = design_position(pr);
-                let (left_design, _) = design_position(pl);
+                let (right_design, damping) = design_position_with(pr, &ctx);
+                let (left_design, _) = design_position_with(pl, &ctx);
                 let right = right_design.segment_params();
                 let left = left_design.segment_params();
-                let cents =
-                    crate::course::unison_detune_cents(crate::layout::BASS_COURSES + course);
+                let cents = crate::course::unison_detune_cents(layout.bass_courses() + course);
                 let strings = [0, 1].map(|i| {
                     // 同じ弦なので右と左は同じデチューンを受ける (張り直しの残差)。
                     let c = if i == 0 { 0.0 } else { cents };
@@ -125,6 +145,7 @@ impl Instrument {
 
         Self {
             layout,
+            config,
             bass,
             treble,
             strike_ratio: 0.09,
@@ -134,9 +155,14 @@ impl Instrument {
         }
     }
 
-    /// 発音位置の数 (44)。
+    /// 発音位置の数 (15/14 で 44、半音階で 48)。
     pub fn string_count(&self) -> usize {
-        STRING_COUNT
+        self.layout.positions().len()
+    }
+
+    /// 構築時の構成 (配置・音律)。
+    pub fn config(&self) -> InstrumentConfig {
+        self.config
     }
 
     /// 配置表。
@@ -482,7 +508,10 @@ mod tests {
                 .iter()
                 .find(|p| p.side == BridgeSide::TrebleLeft && p.course == 7)
                 .unwrap();
-            design_position(p).0.segment_params().partial_hz(3)
+            crate::scaling::design_position(p)
+                .0
+                .segment_params()
+                .partial_hz(3)
         };
 
         let level_at_left_p3 = |coupling: f64| -> f64 {
@@ -651,6 +680,34 @@ mod tests {
         let p = *inst.string_params(60).unwrap();
         let at = |n: usize| magnitude_at(&x, p.partial_hz(n));
         assert!(at(8) < at(7) * 0.02, "打弦点 1/8 のノッチが出ていない");
+    }
+
+    #[test]
+    fn the_chromatic_instrument_plays_the_semitones() {
+        // P7: 半音階配置。15/14 では無音の G#4 (68) が鳴り、最高音 E6 (88) も鳴る。
+        let config = InstrumentConfig {
+            layout: LayoutKind::ChromaticE3E6,
+            ..InstrumentConfig::default()
+        };
+        let mut inst = Instrument::with_config(SR, config);
+        assert_eq!(inst.string_count(), 48);
+
+        for key in [68u8, 52, 88] {
+            inst.reset();
+            inst.note_on(key, 0.8);
+            let x = render(&mut inst, 0.3);
+            let f0 = inst.string_params(key).unwrap().f0_hz;
+            assert!(
+                magnitude_at(&x, f0) > 1e-4,
+                "半音階で key {key} が鳴らない (f0 = {f0:.1})"
+            );
+        }
+
+        // 15/14 では G#4 は無音のまま (回帰)。
+        let mut diatonic = Instrument::new(SR);
+        diatonic.note_on(68, 0.8);
+        let x = render(&mut diatonic, 0.2);
+        assert!(x.iter().all(|&v| v.abs() < 1e-9), "15/14 で G#4 が鳴った");
     }
 
     #[test]

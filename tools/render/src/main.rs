@@ -12,6 +12,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use phydulcimer_core::hammer::{Hammer, HammerFace, HammerParams, HammerState};
+use phydulcimer_core::instrument::InstrumentConfig;
+use phydulcimer_core::layout::LayoutKind;
+use phydulcimer_core::scaling::Temperament;
 use phydulcimer_core::segment::{DampingParams, Decimation, Segment, SegmentParams};
 use phydulcimer_core::{smoke::DecayingSine, Sample, DEFAULT_SAMPLE_RATE};
 
@@ -37,10 +40,14 @@ INSTRUMENT (--instrument):
     --raw                  bypass soundboard+cabinet, output bridge force (A/B)
     --no-room              bypass the X-Y room (measure with this; the room
                            hides flaws in the instrument model)
-    --sweep                render EVERY mapped key (G2..D6) one file each,
+    --sweep                render EVERY mapped key one file each,
                            key-<midi>.wav next to --out. ignores --key.
                            standard register-balance condition (Phase 10):
                              --sweep --dur 3.0 --vel 1.0 --no-room
+    --layout <NAME>        diatonic (15/14) | chromatic (E3-E6)  [default: diatonic]
+                           also applies to --table and --sweep
+    --temperament <NAME>   pure (2:3 bridge, +2c) | equal (12-TET fifth)
+                                                              [default: pure]
 
     --soundboard           render the soundboard+cabinet impulse response
 
@@ -125,6 +132,8 @@ struct Args {
     raw: bool,
     no_room: bool,
     sweep: bool,
+    layout: LayoutKind,
+    temperament: Temperament,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -177,6 +186,8 @@ impl Default for Args {
             raw: false,
             no_room: false,
             sweep: false,
+            layout: LayoutKind::default(),
+            temperament: Temperament::default(),
         }
     }
 }
@@ -202,7 +213,7 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
     if args.mode == Mode::DesignTable {
-        print_design_table(args.sample_rate);
+        print_design_table(args.layout, args.temperament, args.sample_rate);
         return Ok(());
     }
 
@@ -355,7 +366,6 @@ fn render_string(args: &Args) -> Result<(Vec<Sample>, String), String> {
 /// 正規化はしない: 掃引の目的は鍵間のレベル比較そのものなので、`--peak` の
 /// 指定はエラーにする。
 fn run_sweep(args: &Args) -> Result<(), String> {
-    use phydulcimer_core::instrument::{KEY_MAX, KEY_MIN};
     use phydulcimer_core::layout::Layout;
 
     if !args.keys.is_empty() {
@@ -366,9 +376,9 @@ fn run_sweep(args: &Args) -> Result<(), String> {
     }
 
     let dir = args.out.parent().unwrap_or(Path::new(".")).to_path_buf();
-    let layout = Layout::standard_15_14();
+    let layout = Layout::of(args.layout);
     let mut count = 0;
-    for key in KEY_MIN..=KEY_MAX {
+    for key in layout.key_min()..=layout.key_max() {
         if layout.preferred_index(key).is_none() {
             continue;
         }
@@ -408,7 +418,11 @@ fn render_instrument(args: &Args) -> Result<(Vec<Vec<Sample>>, String), String> 
         return Err("--instrument には --key <MIDI> が最低 1 つ必要です".into());
     }
 
-    let mut engine = DulcimerEngine::new(args.sample_rate, 64);
+    let config = InstrumentConfig {
+        layout: args.layout,
+        temperament: args.temperament,
+    };
+    let mut engine = DulcimerEngine::with_config(args.sample_rate, 64, config);
     engine.set_strike_ratio(args.strike);
     if args.no_coupling {
         engine.set_bridge_coupling(0.0);
@@ -480,14 +494,17 @@ fn render_soundboard_ir(args: &Args) -> Result<(Vec<Vec<Sample>>, String), Strin
     ))
 }
 
-/// 15/14 の設計表 (44 発音位置)。P3 の完了条件の確認に使う。
-fn print_design_table(sample_rate: f64) {
+/// 設計表 (15/14 で 44 位置、半音階で 48 位置)。P3/P7 の完了条件の確認に使う。
+fn print_design_table(kind: LayoutKind, temperament: Temperament, sample_rate: f64) {
     use phydulcimer_core::layout::{note_name, BridgeSide, Layout};
-    use phydulcimer_core::scaling::{design_position, key_to_hz};
+    use phydulcimer_core::scaling::{key_to_hz, DesignContext};
 
-    let layout = Layout::standard_15_14();
+    let layout = Layout::of(kind);
+    let ctx = DesignContext::for_layout(&layout, temperament);
     println!(
-        "15/14 standard layout — {} speaking positions @ {} Hz",
+        "{:?} layout ({:?}) — {} speaking positions @ {} Hz",
+        kind,
+        temperament,
         layout.positions().len(),
         sample_rate
     );
@@ -509,7 +526,7 @@ fn print_design_table(sample_rate: f64) {
     );
 
     for p in layout.positions() {
-        let (design, damping) = design_position(p);
+        let (design, damping) = phydulcimer_core::scaling::design_position_with(p, &ctx);
         let params = design.segment_params();
         let side = match p.side {
             BridgeSide::Bass => "bass",
@@ -682,6 +699,8 @@ fn parse_args(argv: Vec<String>) -> Result<Option<Args>, String> {
             ),
             "--no-coupling" => args.no_coupling = true,
             "--sweep" => args.sweep = true,
+            "--layout" => args.layout = parse_layout(&value()?)?,
+            "--temperament" => args.temperament = parse_temperament(&value()?)?,
             "--raw" => args.raw = true,
             "--no-room" => args.no_room = true,
             "--soundboard" => args.mode = Mode::Soundboard,
@@ -727,6 +746,22 @@ fn parse_segment(s: &str) -> Result<SegmentKind, String> {
         other => Err(format!(
             "--segment は treble-long | treble-short です: {other}"
         )),
+    }
+}
+
+fn parse_layout(s: &str) -> Result<LayoutKind, String> {
+    match s {
+        "diatonic" => Ok(LayoutKind::Diatonic1514),
+        "chromatic" => Ok(LayoutKind::ChromaticE3E6),
+        other => Err(format!("--layout は diatonic | chromatic です: {other}")),
+    }
+}
+
+fn parse_temperament(s: &str) -> Result<Temperament, String> {
+    match s {
+        "pure" => Ok(Temperament::PureFifth),
+        "equal" => Ok(Temperament::Equal12),
+        other => Err(format!("--temperament は pure | equal です: {other}")),
     }
 }
 

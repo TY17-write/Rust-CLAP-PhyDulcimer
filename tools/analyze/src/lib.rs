@@ -1050,7 +1050,7 @@ mod loudness_tests {
         // L = R のステレオでは +3.01 dB されて 0.0 LUFS。
         let x = sine(997.0, 1.0, (SR * 2.0) as usize);
 
-        let mono = loudness(&[x.clone()], SR).expect("測れること");
+        let mono = loudness(std::slice::from_ref(&x), SR).expect("測れること");
         assert_relative_eq!(mono.integrated_lufs, -3.01, epsilon = 0.05);
         assert_relative_eq!(mono.momentary_max_lufs, -3.01, epsilon = 0.05);
 
@@ -1080,7 +1080,7 @@ mod loudness_tests {
         // ならない — トーンを長くして寄与を薄め、0.3 LU 以内で見る。
         let tone = sine(997.0, 0.5, (SR * 5.0) as usize);
         let mut with_silence = tone.clone();
-        with_silence.extend(std::iter::repeat(0.0f32).take((SR * 15.0) as usize));
+        with_silence.extend(std::iter::repeat_n(0.0f32, (SR * 15.0) as usize));
 
         let short = loudness(&[tone], SR).expect("測れること");
         let long = loudness(&[with_silence], SR).expect("測れること");
@@ -1115,7 +1115,7 @@ mod loudness_tests {
         // 減衰音の比較にモーメンタリ最大を使う根拠: 後ろに何を足しても不変。
         let tone = sine(997.0, 0.7, SR as usize);
         let mut with_silence = tone.clone();
-        with_silence.extend(std::iter::repeat(0.0f32).take((SR * 5.0) as usize));
+        with_silence.extend(std::iter::repeat_n(0.0f32, (SR * 5.0) as usize));
 
         let a = loudness(&[tone], SR).unwrap().momentary_max_lufs;
         let b = loudness(&[with_silence], SR).unwrap().momentary_max_lufs;

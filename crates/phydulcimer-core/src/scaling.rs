@@ -45,13 +45,112 @@ const TREBLE_TOTAL_BOTTOM_M: f64 = 0.826;
 /// (約 1000 MPa) を超えない**ことから逆算した設計値。
 const TREBLE_TOTAL_TOP_M: f64 = 0.36;
 
-/// トレブルブリッジの分割: 長い側の割合 (2:3 の 3)。
-const TREBLE_LONG_SHARE: f64 = 0.6;
-
 /// バス最低コースの発弦長 [m] (使う側 = 長い側)。
 const BASS_SPEAKING_BOTTOM_M: f64 = 0.74;
 /// バス最高コースの発弦長 [m]。
 const BASS_SPEAKING_TOP_M: f64 = 0.30;
+
+/// 半音階配置 (E3–E6、Phase 7) のジオメトリ。
+///
+/// 一次資料の実測が無いので、**端の波速 `c = 2·L·f0` が 15/14 の同音域と
+/// 同程度になる**よう選んだ設計値。妥当性は published-ranges テスト
+/// (応力・張力・B の文献範囲) が固定する — 参照音源を持たないプロジェクト
+/// では、これが唯一の外部基準 (D-006)。
+const CHROM_BASS_SPEAKING_BOTTOM_M: f64 = 0.55;
+const CHROM_BASS_SPEAKING_TOP_M: f64 = 0.32;
+const CHROM_TREBLE_TOTAL_BOTTOM_M: f64 = 0.72;
+const CHROM_TREBLE_TOTAL_TOP_M: f64 = 0.32;
+
+/// トレブルブリッジの置き方 = 左区間の音律 (Phase 7)。
+///
+/// ブリッジは弦長を分割し、左区間の周波数は**分割比から物理的に導かれる**
+/// (`f_left = f_right · S/(1−S)`)。音律の切り替えとはブリッジを僅かに
+/// 動かすことで、弦の設計値 (長さ・f0) が変わる → 弦バンクの再構築を伴う
+/// (プラグインでは activate 時に適用)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Temperament {
+    /// ブリッジをちょうど 2:3 に置く。左 = 右 × 1.5 (純正5度 702 cent、
+    /// 平均律 +2 cent — 実機どおり、D-017)
+    #[default]
+    PureFifth,
+    /// ブリッジを約 0.3 mm 動かして左を平均律の完全5度 (700 cent) に
+    /// 合わせる (実機の調律師が取る妥協の再現)
+    Equal12,
+}
+
+impl Temperament {
+    /// 左区間の周波数比 (右に対する倍率)。
+    pub fn fifth_ratio(self) -> f64 {
+        match self {
+            Temperament::PureFifth => 1.5,
+            Temperament::Equal12 => (7.0 / 12.0f64).exp2(),
+        }
+    }
+
+    /// トレブル長弦側 (右) の分割比 S。`f_left = f_right · S/(1−S)` なので
+    /// S = r/(1+r)。PureFifth でちょうど 0.6 (= 2:3)。
+    pub fn treble_long_share(self) -> f64 {
+        let r = self.fifth_ratio();
+        r / (1.0 + r)
+    }
+}
+
+/// 設計の文脈 — 配置由来の数値 + 音律。[`design_position_with`] に渡す。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DesignContext {
+    pub bass_courses: usize,
+    pub treble_courses: usize,
+    /// 音域位置 t (線径の補間) の範囲
+    pub key_min: u8,
+    pub key_max: u8,
+    pub bass_speaking_bottom_m: f64,
+    pub bass_speaking_top_m: f64,
+    pub treble_total_bottom_m: f64,
+    pub treble_total_top_m: f64,
+    pub temperament: Temperament,
+}
+
+impl DesignContext {
+    /// 配置表と音律から文脈を組む。
+    pub fn for_layout(layout: &crate::layout::Layout, temperament: Temperament) -> Self {
+        use crate::layout::LayoutKind;
+        let (bass_bottom, bass_top, treble_bottom, treble_top) = match layout.kind() {
+            LayoutKind::Diatonic1514 => (
+                BASS_SPEAKING_BOTTOM_M,
+                BASS_SPEAKING_TOP_M,
+                TREBLE_TOTAL_BOTTOM_M,
+                TREBLE_TOTAL_TOP_M,
+            ),
+            LayoutKind::ChromaticE3E6 => (
+                CHROM_BASS_SPEAKING_BOTTOM_M,
+                CHROM_BASS_SPEAKING_TOP_M,
+                CHROM_TREBLE_TOTAL_BOTTOM_M,
+                CHROM_TREBLE_TOTAL_TOP_M,
+            ),
+        };
+        Self {
+            bass_courses: layout.bass_courses(),
+            treble_courses: layout.treble_courses(),
+            key_min: layout.key_min(),
+            key_max: layout.key_max(),
+            bass_speaking_bottom_m: bass_bottom,
+            bass_speaking_top_m: bass_top,
+            treble_total_bottom_m: treble_bottom,
+            treble_total_top_m: treble_top,
+            temperament,
+        }
+    }
+}
+
+impl Default for DesignContext {
+    /// 15/14 標準配置・純正5度 (従来の設計そのまま)。
+    fn default() -> Self {
+        Self::for_layout(
+            &crate::layout::Layout::standard_15_14(),
+            Temperament::PureFifth,
+        )
+    }
+}
 
 /// 芯線の応力目標 [Pa]。
 ///
@@ -132,11 +231,6 @@ fn diameter_at(t: f64) -> f64 {
     lerp(DIAMETER_LOW_M, DIAMETER_HIGH_M, t.clamp(0.0, 1.0))
 }
 
-/// 鍵から音域位置 t (0–1) を出す。G2 (43) 〜 D6 (86)。
-fn register_t(midi: u8) -> f64 {
-    (midi as f64 - 43.0) / (86.0 - 43.0)
-}
-
 /// コースの基音に応じた減衰設計。
 ///
 /// 左右の区間は同じ弦なので、**コースの (右側の) 基音**でアンカーを置き、
@@ -203,29 +297,52 @@ pub fn course_gain(course_f0_hz: f64) -> f64 {
     10.0f64.powf(db / 20.0)
 }
 
-/// 1 つの発音位置の設計 (弦 + 減衰)。
+/// 1 つの発音位置の設計 (弦 + 減衰)。**15/14 標準配置・純正5度**の既定文脈。
+///
+/// 別配置・別音律は [`design_position_with`] を使うこと。既定文脈と違う
+/// 配置の `Position` を渡すと設計がずれる (course 数の補間が合わない)。
 pub fn design_position(position: &Position) -> (StringDesign, DampingParams) {
+    design_position_with(position, &DesignContext::default())
+}
+
+/// 1 つの発音位置の設計 (弦 + 減衰)。文脈 (配置由来の数値 + 音律) 指定版。
+///
+/// 音高は `Position` の表から取る: 右側は `midi` そのもの、左側は
+/// **常に右 = `midi − 7`** (配置表の構成則。共有弦なので左の周波数は
+/// 分割比から導かれ、`midi` は 12 平均律の最近傍でしかない)。
+pub fn design_position_with(
+    position: &Position,
+    ctx: &DesignContext,
+) -> (StringDesign, DampingParams) {
+    // 音域位置 t (0–1): 線径の補間に使う。
+    let register = |midi: u8| -> f64 {
+        (midi as f64 - ctx.key_min as f64) / (ctx.key_max as f64 - ctx.key_min as f64)
+    };
     match position.side {
         BridgeSide::Bass => {
-            let t = position.course as f64 / (crate::layout::BASS_COURSES - 1) as f64;
-            let speaking = lerp(BASS_SPEAKING_BOTTOM_M, BASS_SPEAKING_TOP_M, t);
+            let t = position.course as f64 / (ctx.bass_courses - 1) as f64;
+            let speaking = lerp(ctx.bass_speaking_bottom_m, ctx.bass_speaking_top_m, t);
             let f0 = key_to_hz(position.midi);
             let design = StringDesign {
                 speaking_m: speaking,
                 f0_hz: f0,
-                diameter_m: diameter_at(register_t(position.midi)),
+                diameter_m: diameter_at(register(position.midi)),
                 wrap: wrap_for(speaking, f0),
             };
             (design, damping_for_course(f0))
         }
         BridgeSide::TrebleRight | BridgeSide::TrebleLeft => {
-            let t = position.course as f64 / (crate::layout::TREBLE_COURSES - 1) as f64;
-            let total = lerp(TREBLE_TOTAL_BOTTOM_M, TREBLE_TOTAL_TOP_M, t);
+            let t = position.course as f64 / (ctx.treble_courses - 1) as f64;
+            let total = lerp(ctx.treble_total_bottom_m, ctx.treble_total_top_m, t);
+            let share = ctx.temperament.treble_long_share();
             // 右側 (長い側) の設計が弦を決める。
-            let right_midi = 55 + course_offset(position.course);
+            let right_midi = match position.side {
+                BridgeSide::TrebleRight => position.midi,
+                _ => position.midi - 7,
+            };
             let f_right = key_to_hz(right_midi);
-            let l_right = total * TREBLE_LONG_SHARE;
-            let diameter = diameter_at(register_t(right_midi));
+            let l_right = total * share;
+            let diameter = diameter_at(register(right_midi));
             let wrap = wrap_for(l_right, f_right);
             let damping = damping_for_course(f_right);
 
@@ -237,12 +354,11 @@ pub fn design_position(position: &Position) -> (StringDesign, DampingParams) {
                     wrap,
                 },
                 _ => {
-                    // 左側: 同じ弦の短い区間。周波数は物理から導かれる
-                    // (純正5度 = 1.5 倍、12 平均律より +2 cent)。
-                    let l_left = total * (1.0 - TREBLE_LONG_SHARE);
+                    // 左側: 同じ弦の短い区間。周波数は分割比から物理的に導かれる
+                    // (PureFifth: ×1.5 = +2 cent / Equal12: ×2^(7/12) = 0 cent)。
                     StringDesign {
-                        speaking_m: l_left,
-                        f0_hz: f_right * (TREBLE_LONG_SHARE / (1.0 - TREBLE_LONG_SHARE)),
+                        speaking_m: total * (1.0 - share),
+                        f0_hz: f_right * ctx.temperament.fifth_ratio(),
                         diameter_m: diameter,
                         wrap,
                     }
@@ -251,12 +367,6 @@ pub fn design_position(position: &Position) -> (StringDesign, DampingParams) {
             (design, damping)
         }
     }
-}
-
-/// トレブルのコース番号 → G メジャースケール上の半音オフセット。
-fn course_offset(course: usize) -> u8 {
-    const MAJOR: [u8; 7] = [2, 2, 1, 2, 2, 2, 1];
-    (0..course).map(|i| MAJOR[i % 7]).sum()
 }
 
 #[cfg(test)]
@@ -291,11 +401,9 @@ mod tests {
 
     /// **P3 の完了条件**: 導いた設計が文献の範囲に入ること。
     /// 参照音源を持たないプロジェクトでは、これが唯一の外部基準になる。
-    #[test]
-    fn every_string_is_within_published_ranges() {
-        let layout = Layout::standard_15_14();
+    fn assert_published_ranges(layout: &Layout, ctx: &DesignContext) {
         for p in layout.positions() {
-            let (design, _) = design_position(p);
+            let (design, _) = design_position_with(p, ctx);
             let params = design.segment_params();
             let name = crate::layout::note_name(p.midi);
 
@@ -331,6 +439,62 @@ mod tests {
             let modes = params.mode_count(48_000.0);
             assert!(modes >= 8, "{name}: モードが {modes} 本しかない");
         }
+    }
+
+    #[test]
+    fn every_string_is_within_published_ranges() {
+        let layout = Layout::standard_15_14();
+        let ctx = DesignContext::for_layout(&layout, Temperament::PureFifth);
+        assert_published_ranges(&layout, &ctx);
+    }
+
+    #[test]
+    fn chromatic_strings_are_within_published_ranges() {
+        // P7: 半音階配置も同じ文献範囲に入ること (ジオメトリ設計値の外部基準)。
+        let layout = Layout::chromatic_e3_e6();
+        let ctx = DesignContext::for_layout(&layout, Temperament::PureFifth);
+        assert_published_ranges(&layout, &ctx);
+    }
+
+    #[test]
+    fn equal_temperament_puts_the_left_side_on_the_et_fifth() {
+        // P7: ブリッジを動かすと左区間が平均律の完全5度 (700 cent) に乗る。
+        let layout = Layout::standard_15_14();
+        let ctx = DesignContext::for_layout(&layout, Temperament::Equal12);
+        for course in 0..layout.treble_courses() {
+            let find = |side: BridgeSide| {
+                layout
+                    .positions()
+                    .iter()
+                    .find(|p| p.side == side && p.course == course)
+                    .map(|p| design_position_with(p, &ctx).0)
+                    .unwrap()
+            };
+            let right = find(BridgeSide::TrebleRight);
+            let left = find(BridgeSide::TrebleLeft);
+
+            // 比はちょうど 2^(7/12)、つまり左は平均律の MIDI 音高そのもの。
+            assert_relative_eq!(
+                left.f0_hz / right.f0_hz,
+                (7.0 / 12.0f64).exp2(),
+                epsilon = 1e-12
+            );
+            // 同じ弦なので張力は一致したまま (物理の整合性)。
+            assert_relative_eq!(
+                right.segment_params().tension(),
+                left.segment_params().tension(),
+                max_relative = 1e-9
+            );
+        }
+        // 平均律からのずれは 0 cent (左専用鍵が平均律に乗る)。
+        let p = layout
+            .positions()
+            .iter()
+            .find(|p| p.side == BridgeSide::TrebleLeft && p.course == 0)
+            .unwrap();
+        let (design, _) = design_position_with(p, &ctx);
+        let cents = 1200.0 * (design.f0_hz / key_to_hz(p.midi)).log2();
+        assert!(cents.abs() < 0.01, "平均律で {cents:.3} cent ずれている");
     }
 
     #[test]
@@ -417,11 +581,16 @@ mod tests {
     }
 
     #[test]
-    fn course_offsets_follow_the_major_scale() {
-        // G3 (55) + offset がトレブル右の音列 G3 A3 B3 C4 D4... になる。
-        let expected = [0u8, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17, 19, 21, 23, 24];
-        for (course, &off) in expected.iter().enumerate() {
-            assert_eq!(course_offset(course), off, "course {course}");
-        }
+    fn the_temperament_shares_are_consistent() {
+        // PureFifth はちょうど 2:3 (S = 0.6)、Equal12 は S/(1−S) = 2^(7/12)。
+        assert_relative_eq!(
+            Temperament::PureFifth.treble_long_share(),
+            0.6,
+            epsilon = 1e-12
+        );
+        let s = Temperament::Equal12.treble_long_share();
+        assert_relative_eq!(s / (1.0 - s), (7.0 / 12.0f64).exp2(), epsilon = 1e-12);
+        // ブリッジの移動量はごく僅か (826 mm の弦で 1 mm 未満)。
+        assert!((0.6 - s).abs() * 0.826 < 1e-3);
     }
 }

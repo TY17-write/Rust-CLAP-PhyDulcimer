@@ -62,6 +62,37 @@ fn bench_instrument(c: &mut Criterion) {
         });
     });
 
+    // P7: 半音階配置 (48 位置) の最悪ケース。15/14 比 +9% の実コストを
+    // P8 の予算 (25%) に対して数値で残す。
+    group.bench_function("engine/chromatic48/block64", |b| {
+        use phydulcimer_core::instrument::InstrumentConfig;
+        use phydulcimer_core::layout::LayoutKind;
+        let config = InstrumentConfig {
+            layout: LayoutKind::ChromaticE3E6,
+            ..InstrumentConfig::default()
+        };
+        let mut engine = DulcimerEngine::with_config(SR, BLOCK, config);
+        let (lo, hi) = {
+            let l = engine.instrument().layout();
+            (l.key_min(), l.key_max())
+        };
+        let mut l = [0.0f32; BLOCK];
+        let mut r = [0.0f32; BLOCK];
+        for key in lo..=hi {
+            engine.note_on(key, 1.0);
+        }
+        let mut n = 0usize;
+        b.iter(|| {
+            n += 1;
+            if n % RESTRIKE_BLOCKS == 0 {
+                for key in lo..=hi {
+                    engine.note_on(key, 1.0);
+                }
+            }
+            std::hint::black_box(engine.process_stereo(&mut l, &mut r));
+        });
+    });
+
     // 参考: 無音 (全弦が静止) のコスト。active スキップを入れる前の基準。
     group.bench_function("silent/block64", |b| {
         let mut inst = Instrument::new(SR);

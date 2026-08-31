@@ -22,7 +22,7 @@
 //! フルスケールに収まる」に置き、出力段にソフトクリップを 1 つ置く。
 
 use crate::cabinet::{Cabinet, CabinetParams};
-use crate::instrument::Instrument;
+use crate::instrument::{Instrument, InstrumentConfig};
 use crate::room::{Room, RoomParams};
 use crate::soundboard::{Soundboard, SoundboardParams};
 use crate::Sample;
@@ -66,10 +66,16 @@ pub struct DulcimerEngine {
 }
 
 impl DulcimerEngine {
-    /// **確保はここだけ** (メインスレッドで呼ぶこと)。
+    /// **確保はここだけ** (メインスレッドで呼ぶこと)。15/14・純正5度。
     pub fn new(sample_rate: f64, max_block: usize) -> Self {
+        Self::with_config(sample_rate, max_block, InstrumentConfig::default())
+    }
+
+    /// 構成 (配置・音律) を指定して構築する (Phase 7)。
+    /// 構成の変更は再構築 = 確保を伴うので、プラグインでは activate 時に呼ぶ。
+    pub fn with_config(sample_rate: f64, max_block: usize, config: InstrumentConfig) -> Self {
         Self {
-            instrument: Instrument::new(sample_rate),
+            instrument: Instrument::with_config(sample_rate, config),
             // ゾーンの種は固定 (ビルドごとに音が変わってはいけない)。
             sb_bass: Soundboard::new(SoundboardParams::default(), 0xB055, sample_rate),
             sb_treble: Soundboard::new(SoundboardParams::default(), 0x7EB1, sample_rate),
@@ -84,6 +90,11 @@ impl DulcimerEngine {
 
     pub fn instrument(&self) -> &Instrument {
         &self.instrument
+    }
+
+    /// 構築時の構成 (配置・音律)。
+    pub fn config(&self) -> InstrumentConfig {
+        self.instrument.config()
     }
 
     pub fn note_on(&mut self, key: u8, velocity: f64) {
@@ -295,6 +306,30 @@ mod tests {
     fn all_positions_ff_stay_within_full_scale() {
         let mut e = DulcimerEngine::new(SR, BLOCK);
         for key in KEY_MIN..=KEY_MAX {
+            e.note_on(key, 1.0);
+        }
+        let (x, peak) = render(&mut e, 2.0);
+        assert!(x.iter().all(|s| s.is_finite()));
+        assert!(e.is_finite());
+        assert!(peak <= 1.0, "フルスケールを超えた: {peak}");
+        assert!(peak > 0.3, "全打鍵なのに小さすぎる: {peak}");
+    }
+
+    /// P7: 半音階配置 (48 位置) でもヘッドルームが保たれること。
+    #[test]
+    fn chromatic_all_positions_ff_stay_within_full_scale() {
+        use crate::instrument::InstrumentConfig;
+        use crate::layout::LayoutKind;
+        let config = InstrumentConfig {
+            layout: LayoutKind::ChromaticE3E6,
+            ..InstrumentConfig::default()
+        };
+        let mut e = DulcimerEngine::with_config(SR, BLOCK, config);
+        let (lo, hi) = {
+            let l = e.instrument().layout();
+            (l.key_min(), l.key_max())
+        };
+        for key in lo..=hi {
             e.note_on(key, 1.0);
         }
         let (x, peak) = render(&mut e, 2.0);
