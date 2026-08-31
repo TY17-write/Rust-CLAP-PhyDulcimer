@@ -1,0 +1,13 @@
+/target
+/out
+**/*.rs.bk
+*.pdb
+
+# レンダリング結果は成果物ではないので追跡しない。
+*.wav
+
+# ただしテスト用の参照素材は追跡する。
+!assets/**/*.wav
+
+.DS_Store
+Thumbs.db

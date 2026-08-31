@@ -1,0 +1,24 @@
+[package]
+name = "phydulcimer-analyze"
+description = "WAV analysis for PhyDulcimer: partial magnitudes, T60, fundamental estimation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# lib と bin に分けてある。PhyPiano では解析器が bin の中の `mod analysis` に
+# 閉じていて、`tests/` から叩けなかった。測定器そのものの正しさを統合テストで
+# 固定したいので、こちらでは lib として公開する。
+[lib]
+name = "phydulcimer_analyze"
+path = "src/lib.rs"
+
+[[bin]]
+name = "phydulcimer-analyze"
+path = "src/main.rs"
+
+[dependencies]
+hound.workspace = true
+
+[dev-dependencies]
+approx.workspace = true

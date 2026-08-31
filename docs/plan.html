@@ -1,0 +1,1365 @@
+<title>PhyDulcimer 実装計画</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Old+Mincho:wght@400;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+:root {
+  --ground:      #E9EAE6;
+  --surface:     #F2F3EF;
+  --surface-2:   #DFE1DB;
+  --ink:         #1A1E1C;
+  --ink-soft:    #4B534E;
+  --ink-faint:   #7A817C;
+  --rule:        #CBCFC7;
+  --rule-soft:   #DCDFD8;
+  --bronze:      #8A5F2C;
+  --bronze-dim:  #B08B57;
+  --steel:       #3B6272;
+  --steel-dim:   #6D95A4;
+  --warn:        #8B4529;
+  --shadow:      0 1px 2px rgba(26,30,28,.06);
+}
+
+:root:not([data-theme="light"]) {
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:      #131614;
+    --surface:     #1A1E1B;
+    --surface-2:   #232823;
+    --ink:         #E3E6E0;
+    --ink-soft:    #A6ADA7;
+    --ink-faint:   #7A817C;
+    --rule:        #2C312D;
+    --rule-soft:   #232823;
+    --bronze:      #CC9C5C;
+    --bronze-dim:  #8E6C3D;
+    --steel:       #82ACBC;
+    --steel-dim:   #55757F;
+    --warn:        #CE8262;
+    --shadow:      0 1px 2px rgba(0,0,0,.3);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground:      #131614;
+  --surface:     #1A1E1B;
+  --surface-2:   #232823;
+  --ink:         #E3E6E0;
+  --ink-soft:    #A6ADA7;
+  --ink-faint:   #7A817C;
+  --rule:        #2C312D;
+  --rule-soft:   #232823;
+  --bronze:      #CC9C5C;
+  --bronze-dim:  #8E6C3D;
+  --steel:       #82ACBC;
+  --steel-dim:   #55757F;
+  --warn:        #CE8262;
+  --shadow:      0 1px 2px rgba(0,0,0,.3);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: "Zen Kaku Gothic New", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif;
+  font-size: 15.5px;
+  line-height: 1.85;
+  -webkit-font-smoothing: antialiased;
+}
+
+.page {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 28px 120px;
+}
+
+/* ---------- masthead ---------- */
+
+.masthead {
+  padding: 72px 0 34px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.eyebrow {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11.5px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--steel);
+  margin: 0 0 18px;
+}
+
+h1 {
+  font-family: "Zen Old Mincho", "Yu Mincho", serif;
+  font-weight: 700;
+  font-size: clamp(30px, 4.6vw, 46px);
+  line-height: 1.25;
+  letter-spacing: .01em;
+  margin: 0 0 18px;
+  text-wrap: balance;
+}
+
+.standfirst {
+  max-width: 60ch;
+  color: var(--ink-soft);
+  font-size: 16.5px;
+  margin: 0 0 26px;
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 28px;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+.facts b {
+  color: var(--ink-soft);
+  font-weight: 500;
+}
+
+/* ---------- layout ---------- */
+
+.body-grid {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 56px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .body-grid { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  nav.toc { position: static; margin: 28px 0 0; }
+}
+
+nav.toc {
+  position: sticky;
+  top: 28px;
+  padding-top: 46px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+nav.toc ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+nav.toc a {
+  color: var(--ink-faint);
+  text-decoration: none;
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 4px;
+}
+nav.toc a:hover, nav.toc a:focus-visible { color: var(--bronze); }
+nav.toc .n {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--steel-dim);
+}
+
+main { max-width: 70ch; }
+
+/* ---------- sections ---------- */
+
+section { padding-top: 46px; }
+
+h2 {
+  font-family: "Zen Old Mincho", "Yu Mincho", serif;
+  font-weight: 700;
+  font-size: 25px;
+  line-height: 1.4;
+  margin: 0 0 6px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--rule);
+  text-wrap: balance;
+}
+h2 .n {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--steel);
+  margin-right: 12px;
+  letter-spacing: .04em;
+}
+
+h3 {
+  font-family: "Zen Old Mincho", "Yu Mincho", serif;
+  font-weight: 700;
+  font-size: 18px;
+  line-height: 1.5;
+  margin: 34px 0 10px;
+  text-wrap: balance;
+}
+
+h4 {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-weight: 500;
+  font-size: 11.5px;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 26px 0 8px;
+}
+
+p { margin: 0 0 15px; }
+p:last-child { margin-bottom: 0; }
+
+strong { font-weight: 700; color: var(--ink); }
+em { font-style: normal; color: var(--bronze); font-weight: 500; }
+
+a { color: var(--steel); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:focus-visible, button:focus-visible {
+  outline: 2px solid var(--bronze);
+  outline-offset: 2px;
+}
+
+ul, ol { margin: 0 0 15px; padding-left: 1.35em; }
+li { margin-bottom: 7px; }
+li::marker { color: var(--steel-dim); }
+
+code, .mono {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .88em;
+}
+code {
+  background: var(--surface-2);
+  padding: .1em .34em;
+  border-radius: 2px;
+}
+
+/* ---------- tables ---------- */
+
+.tw { overflow-x: auto; margin: 20px 0 24px; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+}
+th, td {
+  text-align: left;
+  padding: 9px 14px 9px 0;
+  border-bottom: 1px solid var(--rule-soft);
+  vertical-align: top;
+}
+th {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-weight: 500;
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+td.num { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px; white-space: nowrap; }
+tr:last-child td { border-bottom: none; }
+
+/* ---------- callouts ---------- */
+
+.note {
+  border-left: 2px solid var(--steel);
+  padding: 2px 0 2px 18px;
+  margin: 22px 0;
+  color: var(--ink-soft);
+  font-size: 14.5px;
+}
+.note.risk { border-left-color: var(--warn); }
+.note.rule { border-left-color: var(--bronze); }
+.note b { color: var(--ink); }
+
+/* ---------- figures ---------- */
+
+figure {
+  margin: 30px 0;
+  padding: 22px 20px 16px;
+  background: var(--surface);
+  border: 1px solid var(--rule-soft);
+}
+figure svg { display: block; width: 100%; height: auto; }
+figcaption {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule-soft);
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--ink-faint);
+}
+figcaption b { color: var(--ink-soft); font-weight: 500; }
+
+.svg-label {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px;
+  fill: var(--ink-faint);
+}
+.svg-label.strong { fill: var(--ink-soft); }
+.svg-title {
+  font-family: "Zen Kaku Gothic New", sans-serif;
+  font-size: 12.5px;
+  fill: var(--ink);
+  font-weight: 500;
+}
+
+/* ---------- code / tree ---------- */
+
+pre {
+  background: var(--surface);
+  border: 1px solid var(--rule-soft);
+  padding: 16px 18px;
+  overflow-x: auto;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 12.5px;
+  line-height: 1.72;
+  margin: 22px 0;
+  color: var(--ink-soft);
+}
+pre b { color: var(--ink); font-weight: 500; }
+pre i { color: var(--ink-faint); font-style: normal; }
+
+/* ---------- phases ---------- */
+
+.phases { display: flex; flex-direction: column; margin-top: 8px; }
+
+.phase {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr);
+  gap: 20px;
+  padding: 22px 0;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.phase:last-child { border-bottom: none; }
+
+.phase .pid {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--bronze);
+  padding-top: 2px;
+}
+.phase h3 { margin: 0 0 8px; font-size: 17px; }
+.phase ul { margin-bottom: 0; }
+
+.done {
+  margin-top: 12px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--rule-soft);
+  font-size: 13.5px;
+  line-height: 1.7;
+}
+.done h4 { margin: 0 0 6px; color: var(--steel); }
+.done ul { padding-left: 1.2em; margin: 0; }
+.done li { margin-bottom: 4px; }
+
+/* ---------- misc ---------- */
+
+.sev {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: .08em;
+  padding: 2px 7px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+.sev.hi { color: var(--warn); }
+.sev.mid { color: var(--bronze); }
+.sev.lo { color: var(--ink-faint); }
+
+.colophon {
+  margin-top: 72px;
+  padding-top: 22px;
+  border-top: 1px solid var(--rule);
+  font-size: 13px;
+  color: var(--ink-faint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+</style>
+
+<div class="page">
+
+<header class="masthead">
+  <p class="eyebrow">Rust + CLAP / 物理モデリング音源</p>
+  <h1>PhyDulcimer 実装計画</h1>
+  <p class="standfirst">
+    アメリカ式ハンマーダルシマー (標準 15/14) を物理モデルで鳴らす CLAP 楽器プラグイン。
+    ピアノ音源の焼き直しではなく、<strong>ダンパーの無い楽器</strong>・<strong>ブリッジが弦を 2 つに分ける構造</strong>・<strong>奏者が選ぶ打弦点</strong>、
+    そして<strong>X-Y ステレオで録られた部屋</strong>を最初から設計に織り込む。
+  </p>
+  <div class="facts">
+    <span><b>ディレクトリ</b> Rust-CLAP-PhyDulcimer</span>
+    <span><b>プラグイン ID</b> jp.ty17.phydulcimer</span>
+    <span><b>状態</b> 計画のみ / Phase 0 未着手</span>
+    <span><b>更新</b> 2026-08-31</span>
+  </div>
+</header>
+
+<div class="body-grid">
+
+<nav class="toc" aria-label="目次">
+  <ol>
+    <li><a href="#s1"><span class="n">01</span><span>この音源が何であるか</span></a></li>
+    <li><a href="#s2"><span class="n">02</span><span>楽器の物理</span></a></li>
+    <li><a href="#s3"><span class="n">03</span><span>モデルの構造</span></a></li>
+    <li><a href="#s4"><span class="n">04</span><span>ROOM — X-Y ステレオ</span></a></li>
+    <li><a href="#s5"><span class="n">05</span><span>演算量</span></a></li>
+    <li><a href="#s6"><span class="n">06</span><span>プロジェクト構成</span></a></li>
+    <li><a href="#s7"><span class="n">07</span><span>実装フェーズ</span></a></li>
+    <li><a href="#s8"><span class="n">08</span><span>検証方法</span></a></li>
+    <li><a href="#s9"><span class="n">09</span><span>危険</span></a></li>
+    <li><a href="#s10"><span class="n">10</span><span>決まっていること</span></a></li>
+  </ol>
+</nav>
+
+<main>
+
+<!-- ============ 1 ============ -->
+<section id="s1">
+<h2><span class="n">01</span>この音源が何であるか</h2>
+
+<p>
+手法の選定は <a href="research.md">研究ノート</a> に譲る。結論だけ書くと、
+打弦弦そのものの合成は隣の <code>Rust-CLAP-PhyPiano</code> と同じ<strong>モーダル合成 (並列2次共振器バンク)</strong> で、
+理由も同じ — 部分音の周波数を直接置けること。
+したがって <code>modal.rs</code> / <code>hammer.rs</code> / <code>soundboard.rs</code> と検証ツール一式は、そのまま資産になる。
+</p>
+
+<p><strong>本プロジェクトの中身は、ピアノと構造が違う 4 か所だけである。</strong>残りは移植と再校正になる。</p>
+
+<div class="tw">
+<table>
+  <thead><tr><th style="width:44%">ピアノ (PhyPiano)</th><th>ダルシマー (本プロジェクト)</th></tr></thead>
+  <tbody>
+    <tr><td>ボイスプールから確保し、ノートオフでダンパーが止める</td><td><strong>ダンパーが無い。全弦を常時回す。</strong>打撃はボイスの確保ではなく力の注入</td></tr>
+    <tr><td>1 本の弦 = 1 つの音高</td><td><strong>ブリッジが弦を 2:3 に分け、1 本が 2 つの音高を持つ</strong> (完全5度)</td></tr>
+    <tr><td>打弦点は固定 (x/L = 1/8)</td><td><strong>奏者が打弦点を選ぶ</strong> (x/L = 0.05–0.15)。主要な音色操作</td></tr>
+    <tr><td>出力は無響。空間は DAW 側の仕事</td><td><strong>X-Y ステレオで録られた部屋まで含める</strong>。楽器の幾何と部屋を同じ座標系で持つ</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h4>やらないこと</h4>
+<ul>
+  <li>板・空気の有限要素シミュレーション。響板はフィルタ近似</li>
+  <li>実測 IR の畳み込み。差し替え余地はインタフェースに残すだけ</li>
+  <li>特定の個体の再現。設計則から導いて文献値の範囲と照合する</li>
+  <li>ツィンバロム / サントゥールの作り込み。配置表の差し替えで後から乗せる</li>
+</ul>
+</section>
+
+<!-- ============ 2 ============ -->
+<section id="s2">
+<h2><span class="n">02</span>楽器の物理</h2>
+
+<p>
+実測研究 (Peterson 1994 / 2006、Vongsawad et al. 2014) と製作者の資料から、
+モデルの構造そのものを変えるほどの違いを拾う。<strong>どれもピアノ音源のパラメータ変更では届かない。</strong>
+</p>
+
+<h3>ブリッジが弦を 2 つの発音区間に分ける</h3>
+
+<p>
+トレブルコースは両端のサイドブリッジに加え、中央のトレブルブリッジを<em>またぐ</em>。
+ブリッジ位置が振動長を 2:3 に分けるので、左右の区間は完全5度の関係になる。
+</p>
+
+<figure>
+<svg viewBox="0 0 640 176" role="img" aria-label="弦がトレブルブリッジで 330 mm と 495 mm に分割され、左右が完全5度になる図">
+  <!-- soundboard line -->
+  <line x1="24" y1="118" x2="616" y2="118" stroke="var(--rule)" stroke-width="1"/>
+  <!-- string -->
+  <line x1="60" y1="72" x2="580" y2="72" stroke="var(--bronze)" stroke-width="2"/>
+  <line x1="60" y1="78" x2="580" y2="78" stroke="var(--bronze-dim)" stroke-width="1.5"/>
+  <!-- side bridges -->
+  <path d="M52 118 L60 68 L68 118 Z" fill="var(--steel-dim)"/>
+  <path d="M572 118 L580 68 L588 118 Z" fill="var(--steel-dim)"/>
+  <!-- treble bridge -->
+  <path d="M258 118 L268 60 L278 118 Z" fill="var(--steel)"/>
+  <!-- strike points -->
+  <circle cx="243" cy="75" r="5" fill="var(--warn)"/>
+  <circle cx="293" cy="75" r="5" fill="var(--warn)"/>
+  <!-- dimension: left -->
+  <line x1="60" y1="146" x2="268" y2="146" stroke="var(--ink-faint)" stroke-width="1"/>
+  <line x1="60" y1="141" x2="60" y2="151" stroke="var(--ink-faint)" stroke-width="1"/>
+  <line x1="268" y1="141" x2="268" y2="151" stroke="var(--ink-faint)" stroke-width="1"/>
+  <text class="svg-label strong" x="164" y="166" text-anchor="middle">330 mm — 2</text>
+  <!-- dimension: right -->
+  <line x1="268" y1="146" x2="580" y2="146" stroke="var(--ink-faint)" stroke-width="1"/>
+  <line x1="580" y1="141" x2="580" y2="151" stroke="var(--ink-faint)" stroke-width="1"/>
+  <text class="svg-label strong" x="424" y="166" text-anchor="middle">495 mm — 3</text>
+  <!-- notes -->
+  <text class="svg-title" x="164" y="42" text-anchor="middle">A4</text>
+  <text class="svg-label" x="164" y="26" text-anchor="middle">5度上</text>
+  <text class="svg-title" x="424" y="42" text-anchor="middle">D4</text>
+  <text class="svg-label" x="268" y="52" text-anchor="middle">treble bridge</text>
+  <text class="svg-label" x="243" y="98" text-anchor="end">打弦点</text>
+  <text class="svg-label" x="293" y="98" text-anchor="start">25–50 mm</text>
+</svg>
+<figcaption>
+  <b>実測例 (Peterson):</b> 最低音コースの全長 826 mm (32.5 inch) が 330 mm と 495 mm に分かれる。13 : 19.5 = 2 : 3。
+  ブリッジは<b>接着されておらず、弦の張力だけで押さえられている</b> — したがって節ではなく有限インピーダンスの支持点で、左右の区間は結合している。片側を叩くと反対側も鳴る。
+</figcaption>
+</figure>
+
+<p>
+ピアノのデュープレックス・スケーリング (アリコート) と同じ構図だが、
+ピアノでは副次的な色づけであるのに対し、<strong>ダルシマーでは主たる発音区間が 2 つある</strong>。
+バスブリッジも弦を分けるが比は単純でなく、長い側だけを演奏に使う。使わない側も張られたままなので共鳴はする。
+</p>
+
+<h3>ダンパーが無い</h3>
+
+<p>
+アメリカ式ハンマーダルシマーには消音機構が一切無い。
+Peterson は、製作者がこの長すぎる減衰を短くするために
+「ブリッジキャップの変更・ブリッジのスロット加工・重量と剛性の低減・響板インピーダンスの低減」を試みてきたと記している。
+<strong>楽器設計上の課題として認識されているほど鳴り続ける。</strong>
+</p>
+
+<ul>
+  <li><strong>ノートオフが無い。</strong>MIDI のノートオフは基本的に捨てる</li>
+  <li><strong>ボイス割当が要らない。</strong>打撃は既に振動している弦への力の追加であって、ボイスの確保ではない</li>
+  <li><strong>共感共鳴が主役。</strong>ピアノではペダルを踏んだときだけの現象が、ここでは常時</li>
+</ul>
+
+<h3>打弦点が固定されない</h3>
+
+<p>
+ピアノのハンマーは常に同じ位置を叩く。ダルシマーは奏者が叩く位置を選ぶ。
+典型はブリッジから 1–2 inch (25–50 mm)。区間長が 330–495 mm なので比にして <code>x/L ≈ 0.05–0.15</code>、
+ピアノの 1/8 (0.125) より<strong>ブリッジ寄り</strong>まで動く。ブリッジ寄りほど明るく打楽器的に、離れるほど丸くなる。
+</p>
+
+<div class="note">
+<b>Peterson の指摘 — アタックの正体。</b>
+ハンマーが接触している短い間、打弦点とブリッジに挟まれた<b>短い区間が独立に振動して</b>、弦の基音よりはるかに高い周波数でブリッジを叩く。
+<code>x/L = 0.05</code> ならこの区間の基本周波数は弦の 20 倍。
+モーダル合成では励振の重みが <code>sin(nπ·x_h/L)</code> なので原理的には自動で出る —
+ただし<b>モードを十分な本数まで持っていれば</b>の話で、モードの打ち切りが直接アタックを殺す。
+</div>
+
+<h3>ハンマーが硬くて軽い</h3>
+
+<p>
+木 (メイプル・チェリー・オーク・ウォルナット) の棒。裏表で材質を変え、片面は素の木、もう片面をレザーやピアノフェルトで覆うものが多い。
+奏法は「drop and bounce」— 6–12 inch の高さから落として重力で当て、<strong>素早く跳ね返して接触時間を最小化する</strong>。
+</p>
+
+<p>
+ピアノのフェルト (接触 0.5–4 ms、圧縮すると硬くなる強い非線形) とは別物で、ほぼ剛体接触に近く接触時間が桁で短い。
+接触時間が 0.1–0.3 ms なら 48 kHz で <strong>5–14 サンプル</strong>しかなく、
+PhyPiano の 4 倍オーバーサンプルでは足りない見込み。<strong>P1 で実測して決める。</strong>
+</p>
+
+<h3>楽器の諸元</h3>
+
+<p>特定の個体の実測ではない。公開資料から拾った代表値で、設計則から導いて文献値の範囲と照合する方式を採る。</p>
+
+<div class="tw">
+<table>
+  <thead><tr><th style="width:38%">項目</th><th>値</th></tr></thead>
+  <tbody>
+    <tr><td>標準構成</td><td class="num">15/14 (トレブル 15 コース / バス 14 コース)</td></tr>
+    <tr><td>音域</td><td class="num">約 3 オクターブ。全音階配置で半音は一部欠落</td></tr>
+    <tr><td>コースあたりの弦</td><td class="num">2 本 (機種により 3–4 本)</td></tr>
+    <tr><td>弦の材質</td><td>plain steel / phosphor bronze / 巻線</td></tr>
+    <tr><td>トレブル最低コースの全長</td><td class="num">826 mm → 330 : 495</td></tr>
+    <tr><td>ブリッジの分割比</td><td class="num">2 : 3 (= 完全5度)</td></tr>
+    <tr><td>打弦点</td><td class="num">ブリッジから 25–50 mm (奏者が変える)</td></tr>
+    <tr><td>ダンパー</td><td><strong>無し</strong></td></tr>
+  </tbody>
+</table>
+</div>
+</section>
+
+<!-- ============ 3 ============ -->
+<section id="s3">
+<h2><span class="n">03</span>モデルの構造</h2>
+
+<figure>
+<svg viewBox="0 0 640 470" role="img" aria-label="MIDI から弦バンク、ブリッジ、響板、ROOM を経て L/R 出力に至る信号フロー">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-faint)"/>
+    </marker>
+  </defs>
+
+  <!-- 1 midi -->
+  <rect x="150" y="8" width="340" height="34" fill="none" stroke="var(--rule)"/>
+  <text class="svg-title" x="320" y="30" text-anchor="middle">MIDI note  +  打弦点 CC  +  ハンマー面</text>
+  <line x1="320" y1="42" x2="320" y2="62" stroke="var(--ink-faint)" marker-end="url(#ar)"/>
+
+  <!-- 2 hammer -->
+  <rect x="150" y="62" width="340" height="34" fill="none" stroke="var(--bronze)"/>
+  <text class="svg-title" x="320" y="84" text-anchor="middle">ハンマー — Hunt-Crossley / 接触中オーバーサンプル</text>
+  <text class="svg-label" x="500" y="84">力</text>
+  <line x1="320" y1="96" x2="320" y2="116" stroke="var(--ink-faint)" marker-end="url(#ar)"/>
+
+  <!-- 3 string bank -->
+  <rect x="40" y="116" width="560" height="146" fill="var(--surface-2)" stroke="var(--bronze)"/>
+  <text class="svg-title" x="60" y="138">弦バンク — 常時走行 (ボイスプールは無い)</text>
+
+  <rect x="70" y="152" width="220" height="42" fill="none" stroke="var(--ink-faint)"/>
+  <text class="svg-label strong" x="180" y="170" text-anchor="middle">区間 L (5度上)</text>
+  <text class="svg-label" x="180" y="186" text-anchor="middle">モードバンク × 弦 2 本</text>
+
+  <rect x="350" y="152" width="220" height="42" fill="none" stroke="var(--ink-faint)"/>
+  <text class="svg-label strong" x="460" y="170" text-anchor="middle">区間 R</text>
+  <text class="svg-label" x="460" y="186" text-anchor="middle">モードバンク × 弦 2 本</text>
+
+  <line x1="290" y1="173" x2="350" y2="173" stroke="var(--steel)" stroke-width="2"/>
+  <circle cx="320" cy="173" r="7" fill="var(--steel)"/>
+  <text class="svg-label strong" x="320" y="214" text-anchor="middle">ブリッジ点 — ランク1 の結合</text>
+  <text class="svg-label" x="320" y="232" text-anchor="middle">v_b を内積で作り、傾き ∝ n の重みで配る</text>
+  <text class="svg-label" x="320" y="250" text-anchor="middle">コース 44 本ぶんが並列に並ぶ</text>
+
+  <line x1="230" y1="262" x2="230" y2="286" stroke="var(--ink-faint)" marker-end="url(#ar)"/>
+  <line x1="410" y1="262" x2="410" y2="286" stroke="var(--ink-faint)" marker-end="url(#ar)"/>
+  <text class="svg-label" x="222" y="278" text-anchor="end">バス側の力</text>
+  <text class="svg-label" x="418" y="278">トレブル側の力</text>
+
+  <!-- 4 soundboard -->
+  <rect x="40" y="286" width="560" height="62" fill="none" stroke="var(--bronze)"/>
+  <text class="svg-title" x="60" y="308">響板 — 並列2次バンク × 2 系統 (ブリッジごと)</text>
+  <text class="svg-label" x="60" y="330">+ 箱 — ヘルムホルツ共鳴 と 板最低次モードの 2 自由度結合</text>
+  <line x1="230" y1="348" x2="230" y2="372" stroke="var(--ink-faint)" marker-end="url(#ar)"/>
+  <line x1="410" y1="348" x2="410" y2="372" stroke="var(--ink-faint)" marker-end="url(#ar)"/>
+  <text class="svg-label" x="320" y="365" text-anchor="middle">系統ごとに位置と角度を持つ</text>
+
+  <!-- 5 room -->
+  <rect x="40" y="372" width="560" height="62" fill="var(--surface-2)" stroke="var(--steel)"/>
+  <text class="svg-title" x="60" y="394">ROOM — X-Y ステレオ</text>
+  <text class="svg-label" x="60" y="416">直接音の指向性  /  初期反射 (鏡像法)  /  後部残響 (FDN・高相関)</text>
+  <line x1="320" y1="434" x2="320" y2="452" stroke="var(--ink-faint)" marker-end="url(#ar)"/>
+
+  <!-- 6 out -->
+  <text class="svg-title" x="320" y="466" text-anchor="middle">ソフトクリップ → out L / R</text>
+</svg>
+<figcaption>
+  <b>共感共鳴という独立したモジュールは無い。</b>全弦が常に本物として走っていて、ブリッジと響板を共有しているので、共鳴は結果として出る。
+</figcaption>
+</figure>
+
+<h3>中核 1 — ボイスプールを廃す</h3>
+
+<p>
+弦は楽器の固定資産として起動時に構築し、<code>process</code> のたびに全部回す。
+<code>note_on</code> は「どの弦のどの区間を、どの位置で、どの強さで叩くか」を決めてハンマーを 1 つ起動するだけで、<strong>弦の状態はリセットしない</strong>。
+</p>
+
+<ul>
+  <li>ボイス割当・ボイス盗み・ノートオフの処理が丸ごと消える</li>
+  <li>連打で鳴っている振動に足し込まれるのが自動的に正しくなる。<strong>ロール奏法はこの楽器の主要奏法</strong>なので効く</li>
+  <li>共感共鳴を別に持たなくてよい</li>
+</ul>
+
+<div class="note rule">
+振幅が閾値を下回った区間はスキップする。ただし<b>性能はスキップを当てにせず最悪ケースで設計する</b> —
+ダンパーが無い楽器では、演奏中ほぼ全区間がアクティブになる。
+</div>
+
+<h3>中核 2 — ブリッジで結合された 2 区間</h3>
+
+<p>
+固定端モードで両区間を持ち、ブリッジ点の速度 <code>v_b</code> を介して結合する。
+ブリッジ点は両者の端なので変位モードは 0 だが、<strong>端点が動くときの結合は変位ではなくモード形状の傾き <code>φ′_n ∝ n</code> で決まる</strong>。したがって:
+</p>
+
+<ul>
+  <li>ブリッジ点の速度が各モードを <code>∝ n</code> の重みで駆動する</li>
+  <li>各モードはブリッジに <code>∝ n</code> の重みで力を返す</li>
+  <li>両区間と響板のアドミタンスが <code>v_b</code> を共有する</li>
+</ul>
+
+<p>
+結合はモーダル空間で<strong>ランク 1</strong> なので、各サンプルで「<code>v_b</code> を作る内積 (O(N))」→「<code>v_b</code> を配る外積 (O(N))」の 2 パスで済む。
+共感共鳴・縦振動と同じ構造で、PhyPiano で既に動いている形。
+</p>
+
+<p>
+<strong>結合が高次ほど強いことは、Peterson の観察と一致する</strong> —
+短い区間が高い周波数でブリッジを駆動するという現象が、この係数から自然に出る。
+</p>
+
+<div class="tw">
+<table>
+  <thead><tr><th>段階</th><th>形</th><th>安定性</th></tr></thead>
+  <tbody>
+    <tr><td class="num">A</td><td>打った区間 → 反対の区間への<strong>一方向</strong></td><td>無条件で安定 (PhyPiano の共感共鳴と同じ判断)</td></tr>
+    <tr><td class="num">B</td><td>ブリッジ点を共有する<strong>双方向</strong>。1×1 の陰的解</td><td>陰的に解けば安定。反復は要らない。要検証</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+<strong>段階 A で音として成立させてから B に進む。</strong>
+段階 B は PhyPiano が「やるとすれば弦のインピーダンスまで含めた双方向結合へ進むほうが筋が良い」と書いた、まさにその一歩。
+ダルシマーではこれが楽器の本質なので避けて通れない。
+</p>
+
+<h3>中核 3 — 打弦点を演奏パラメータにする</h3>
+
+<p>
+<code>x_h/L</code> を実行時に変える。励振の重み <code>sin(nπ·x_h/L)</code> を打撃のたびに計算する。
+既定 0.09 (ブリッジから約 40 mm)、可変範囲 0.03–0.30。MIDI CC で連続に動かし、ベロシティで少し寄せる (強打はブリッジ寄り)。
+ハンマーの当たり面 (木 / レザー / フェルト) も切り替える。
+</p>
+
+<div class="note risk">
+<b>note_on のコストが増える。</b><code>sin</code> をモード数ぶん計算するので、低音の 128 モードで無視できない。
+PhyPiano の実測は低音 3.9 µs。着手時にベンチで測り、足りなければ位相の漸化式で 1 モードあたり乗算 2 回にする。
+</div>
+
+<h3>響板・箱・弦の配置</h3>
+
+<ul>
+  <li>PhyPiano の <code>soundboard.rs</code> (並列2次バンク) を移植して再校正。<strong>ブリッジ 2 箇所で系統を分ける</strong> — PhyPiano のゾーン分割は分解能不足で負けたが、こちらは 2 箇所に物理的な根拠がある</li>
+  <li><strong>ヘルムホルツ共鳴 + 板の最低次モードの 2 自由度結合</strong>を足す (音孔と箱)。Vongsawad らは音孔が放射音に強く効くことを示している</li>
+  <li>弦ごとのブリッジ力ハイパスは移植する</li>
+  <li>配置は <code>layout.rs</code> に表で持つ。既定は 15/14 の D/G 全音階。<strong>同じ音高が複数の場所に存在する</strong>ので MIDI からの割当は 1 対多</li>
+</ul>
+
+<div class="note rule">
+<b>ブリッジ位置が 2:3 なら 5 度は純正 (702 cent) になる。</b>平均律の 700 cent とは 2 cent 違う。
+実機の調律師は左右が両方合うようブリッジを動かす。<b>ブリッジ位置をパラメータにして純正と平均律の間で選べるようにする</b> —
+これは物理から出てくる調律であって、後付けの機能ではない。
+</div>
+</section>
+
+<!-- ============ 4 ============ -->
+<section id="s4">
+<h2><span class="n">04</span>ROOM — X-Y ステレオ</h2>
+
+<p>
+物理モデルの出力は「無響室でブリッジ力から作った音」であって、そのままでは楽器に聴こえない。
+実機の音は必ず部屋を経由している。
+汎用リバーブを後段に足すのでは<strong>楽器の各部が空間のどこにあるかという情報が失われる</strong>ので、
+楽器の幾何と部屋を同じ座標系で持つ。だから最初から設計に入れる。
+</p>
+
+<h3>なぜ X-Y なのか</h3>
+
+<p>
+X-Y は 2 本の指向性マイクを<strong>同一点</strong>に置き、軸を開いて構える方式。
+その結果、この方式には他のステレオ方式に無い性質がある。
+</p>
+
+<ul>
+  <li><strong>L/R に時間差が生じない。</strong>位相干渉が無く、モノ互換が保たれる</li>
+  <li><strong>定位はすべてレベル差で作られる</strong> (強度ステレオ)</li>
+  <li><strong>幅は控えめ。</strong>90° カーディオイドでは、軸方向の音源でも L/R 差は約 5–6 dB にしかならない</li>
+</ul>
+
+<div class="note rule">
+<b>物理モデルとの相性が選定理由。</b>
+X-Y は L/R 間に遅延差を作らないので、弦の共鳴・ブリッジ結合・箱が作る<b>微細な位相構造をそのまま通す</b>。
+AB (スペースドペア) は時間差でこれを濁す。せっかく物理で作った位相を、録音方式で壊さない。
+</div>
+
+<figure>
+<svg id="xy" viewBox="0 0 640 380" role="img" aria-label="X-Y ステレオ配置図。同一点に置かれた 2 本のカーディオイドマイクが 90 度に開き、楽器の両端を捉える">
+  <!-- instrument (trapezoid) -->
+  <path d="M170 52 L470 52 L510 104 L130 104 Z" fill="var(--surface-2)" stroke="var(--bronze-dim)" stroke-width="1.5"/>
+  <text class="svg-label strong" x="320" y="82" text-anchor="middle">hammered dulcimer</text>
+  <circle cx="140" cy="90" r="4.5" fill="var(--bronze)"/>
+  <circle cx="500" cy="90" r="4.5" fill="var(--bronze)"/>
+  <text class="svg-label" x="140" y="122" text-anchor="middle">bass bridge</text>
+  <text class="svg-label" x="500" y="122" text-anchor="middle">treble bridge</text>
+
+  <!-- rays to mic -->
+  <line x1="140" y1="90" x2="320" y2="300" stroke="var(--rule)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="500" y1="90" x2="320" y2="300" stroke="var(--rule)" stroke-width="1" stroke-dasharray="3 3"/>
+
+  <!-- polar plots injected by script -->
+  <g id="xy-polar"></g>
+
+  <!-- mic axes -->
+  <line x1="320" y1="300" x2="222" y2="202" stroke="var(--steel)" stroke-width="1.5"/>
+  <line x1="320" y1="300" x2="418" y2="202" stroke="var(--bronze)" stroke-width="1.5"/>
+  <text class="svg-label strong" x="206" y="196" text-anchor="end" fill="var(--steel)">L 軸 −45°</text>
+  <text class="svg-label strong" x="434" y="196" fill="var(--bronze)">R 軸 +45°</text>
+
+  <!-- mic point -->
+  <circle cx="320" cy="300" r="6" fill="var(--ink)"/>
+  <text class="svg-label strong" x="320" y="326" text-anchor="middle">同一点 — 時間差ゼロ</text>
+  <text class="svg-label" x="320" y="344" text-anchor="middle">p(θ) = 0.5 + 0.5·cos θ  /  開き角 90° (可変 60–135°)</text>
+  <text class="svg-label" x="320" y="362" text-anchor="middle">楽器の両端は ±41°。L/R のレベル差は約 5.4 dB</text>
+</svg>
+<figcaption>
+  <b>幅が控えめであることは欠点ではなく、この方式の音である。</b>
+  つまみで広げられるようにはするが、既定は 90° の実物どおりに置く。
+</figcaption>
+</figure>
+
+<h3>3 層で組む</h3>
+
+<div class="tw">
+<table>
+  <thead><tr><th style="width:22%">層</th><th>中身</th><th style="width:26%">X-Y であることの現れ方</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>直接音</strong></td>
+      <td>響板の系統ごとに角度 θ と距離 d。カーディオイド <code>p(θ±φ/2)</code>、距離減衰 <code>1/d</code>、空気吸収</td>
+      <td>L/R 間に遅延差を作らない。差はレベルだけ</td>
+    </tr>
+    <tr>
+      <td><strong>初期反射</strong></td>
+      <td>部屋の寸法から鏡像法で 12–20 タップ。各タップに遅延・減衰・高域減衰・<strong>到来角</strong></td>
+      <td><strong>ここに一番出る。</strong>到来角ごとに同じカーディオイド行列を通すので、レベル差の時間パターンが空間になる</td>
+    </tr>
+    <tr>
+      <td><strong>後部残響</strong></td>
+      <td>FDN 8 ライン。帯域ごとの減衰</td>
+      <td><strong>L/R の相関を高く保つ</strong> (既定 0.6–0.8)。同一点収音だから。無相関にすると AB になってしまう</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+<b>後部残響を無相関にしないこと</b>が、この ROOM の最も間違えやすい点。
+市販リバーブの多くは L/R を無相関にして広がりを作る。それは<b>離して置いた 2 本のマイクの音</b>であって、X-Y ではない。
+FDN の出力を 2 つの異なる線形結合で取り出し、結合行列で相関を設計する。
+</div>
+
+<h3>パラメータ</h3>
+
+<div class="tw">
+<table>
+  <thead><tr><th style="width:30%">つまみ</th><th>範囲・既定</th><th>効き</th></tr></thead>
+  <tbody>
+    <tr><td>Mic Distance</td><td class="num">0.3–3.0 m / 1.2 m</td><td>直接音 ∝ 1/d、残響は一定。<strong>これ 1 本でタイト ⇔ アンビエントが出る</strong></td></tr>
+    <tr><td>X-Y Angle</td><td class="num">60–135° / 90°</td><td>ステレオ幅。実物どおりは 90°</td></tr>
+    <tr><td>Room Size</td><td class="num">小 / 中 / 大</td><td>初期反射の時間パターンと RT60</td></tr>
+    <tr><td>Wall Absorption</td><td class="num">0–1 / 0.35</td><td>RT60 と高域の落ち方</td></tr>
+    <tr><td>Room</td><td class="num">on / off</td><td>DAW 側で空間を作りたいときのため。<strong>音質判断は必ず off で行う</strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>検証 — ここは参照音源なしで数値が閉じる</h3>
+
+<p>
+本プロジェクトは参照音源を持たない (<a href="#s10">§10</a>)。
+その中で <strong>ROOM は理論値と突き合わせられる数少ない部分</strong>なので、指標を厳密に置く。
+</p>
+
+<ul>
+  <li><strong>L/R 相互相関のピークが遅延 0 にあること。</strong>X-Y の定義そのもの。ずれていたらどこかで遅延差が入っている</li>
+  <li><strong>モノ和 L+R がコムフィルタにならない。</strong>帯域の谷が −3 dB 以内</li>
+  <li>相関係数 — 直接音区間で 0.9 以上、残響区間で 0.5–0.8</li>
+  <li>音源角を振ったとき、L/R レベル差が <code>p(θ±45°)</code> の理論値と <strong>0.5 dB 以内</strong>で一致</li>
+  <li>RT60 が設定した部屋と帯域ごとに一致。ITDG (直接音から最初の反射までの間隔) が部屋の寸法と整合</li>
+</ul>
+
+<div class="note risk">
+<b>部屋を入れると楽器のモデルの粗が隠れる。</b>
+PhyPiano では響板の残響 0.3 秒が「どんなに速く弦を止めても音はここまでしか速く消えない」という下限を作り、測定を頭打ちにした。
+ROOM はそれよりずっと長い。<b>P6 より前の音質判断・P10 の追い込みは、必ず ROOM を off にして行う。</b>
+</div>
+
+<p>
+演算量は初期反射 20 タップ × 2ch と FDN 8 ラインで <strong>3–5 µs/block</strong>。全体の 3% で、設計上の制約にはならない。
+</p>
+</section>
+
+<!-- ============ 5 ============ -->
+<section id="s5">
+<h2><span class="n">05</span>演算量 — 全弦常時は成立する</h2>
+
+<p>
+締切は 64 サンプル @ 48 kHz = <strong>1333 µs/block</strong>。
+PhyPiano の実測 (共感共鳴 1244 共振器で 26.9 µs) から単価を引くと <strong>0.34 ns / 共振器 / サンプル</strong> (SIMD 後)。
+15/14、コースあたり 2 本、モード上限 128 として:
+</p>
+
+<div class="tw">
+<table>
+  <thead><tr><th>区間</th><th>数</th><th>平均モード数</th><th>共振器</th></tr></thead>
+  <tbody>
+    <tr><td>バス (使用側)</td><td class="num">14</td><td class="num">100</td><td class="num">1400</td></tr>
+    <tr><td>バス (未使用側・共鳴のみ)</td><td class="num">14</td><td class="num">60</td><td class="num">840</td></tr>
+    <tr><td>トレブル 右 (低い側)</td><td class="num">15</td><td class="num">45</td><td class="num">675</td></tr>
+    <tr><td>トレブル 左 (5度上)</td><td class="num">15</td><td class="num">30</td><td class="num">450</td></tr>
+    <tr><td>小計 (弦 1 本あたり)</td><td class="num">58 区間</td><td></td><td class="num">3365</td></tr>
+    <tr><td><strong>× 弦 2 本</strong></td><td></td><td></td><td class="num"><strong>6730</strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="tw">
+<table>
+  <thead><tr><th>段</th><th>コスト / block</th><th>根拠</th></tr></thead>
+  <tbody>
+    <tr><td>弦バンク 6730 共振器</td><td class="num">147 µs</td><td>6730 × 64 × 0.34 ns</td></tr>
+    <tr><td>響板 480 モード × 2 系統</td><td class="num">12 µs</td><td>PhyPiano 実測 160 モードで 1.99 µs</td></tr>
+    <tr><td>箱 (2 自由度)</td><td class="num">&lt; 1 µs</td><td>共振器 2 本</td></tr>
+    <tr><td>ROOM</td><td class="num">3–5 µs</td><td>初期反射 20 タップ + FDN 8 ライン</td></tr>
+    <tr><td><strong>合計 (最悪ケース)</strong></td><td class="num"><strong>約 165 µs → CPU 12.4%</strong></td><td>締切 1333 µs</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+PhyPiano の 32 音同時 (183 µs, CPU 13.7%) とほぼ同じで、しかもこちらは<strong>全弦が鳴っている最悪ケース</strong>の値。
+音域が狭く弦が短いぶんモード数が少ないので、ピアノより有利になる。前提が 2 つある。
+</p>
+
+<ol>
+  <li><strong>モーダル共振器の SIMD 化 (PhyPiano Phase 7 の <code>f32x8</code>) を移植すること。</strong>スカラのままなら 5〜10 倍で締切に当たる</li>
+  <li><strong>モード上限 128 が音色として足りること。</strong>打弦点がブリッジに近いので足りない可能性がある。足りなければ上限を上げるか、高域を残差合成に回す</li>
+</ol>
+</section>
+
+<!-- ============ 6 ============ -->
+<section id="s6">
+<h2><span class="n">06</span>プロジェクト構成</h2>
+
+<pre>Rust-CLAP-PhyDulcimer/
+├── Cargo.toml                 <i>workspace</i>
+├── README.md                  <i>Opus 5 作成の明記と参照元リストを維持</i>
+├── CLAUDE.md                  <i>ファイル編集の鉄則 (PhyPiano から複製)</i>
+├── crates/
+│   ├── <b>phydulcimer-core/</b>      <i>DSP。forbid(unsafe_code)、アロケーション無し</i>
+│   │   └── src/
+│   │       ├── modal.rs       <i>モーダル共振器バンク (移植, SIMD)</i>
+│   │       ├── hammer.rs      <i>Hunt-Crossley + 接触中オーバーサンプル</i>
+│   │       ├── segment.rs     <i>1 区間の弦 = モードバンク + 打弦点 + 出力</i>
+│   │       ├── course.rs      <i>コース = 2 区間 × 弦 2–4 本 + ブリッジ結合</i>
+│   │       ├── layout.rs      <i>15/14 の配置表、MIDI 割当、ブリッジ位置</i>
+│   │       ├── scaling.rs     <i>弦の設計則 (長さ・張力 → 線径・B・T60)</i>
+│   │       ├── soundboard.rs  <i>並列2次バンク (移植, 再校正)</i>
+│   │       ├── cabinet.rs     <i>ヘルムホルツ + 板最低次の 2 自由度結合</i>
+│   │       ├── <b>room.rs</b>        <i>X-Y 直接音 / 初期反射 / FDN 後部残響</i>
+│   │       └── instrument.rs  <i>全弦バンク + 響板。ボイスプールの代わり</i>
+│   ├── <b>phydulcimer-plugin/</b>    <i>clack。CLAP の ABI 検証テストを内蔵</i>
+│   └── <b>phydulcimer-gui/</b>       <i>egui のみに依存。ウィンドウを開かない</i>
+├── tools/
+│   ├── render/                <i>オフライン WAV 書き出し</i>
+│   └── analyze/               <i>部分音・T60・帯域・変調深さ・相関</i>
+└── docs/
+    ├── plan.html              <i>本書 (Artifact のコピー)</i>
+    ├── research.md            <i>論文・実機調査</i>
+    ├── problems.md            <i>既知の問題・諦めた近似 (D-001〜)</i>
+    ├── context.md             <i>引き継ぎメモ・実測値の表</i>
+    ├── references/            <i>一次資料 (論文 PDF、実機の寸法)</i>
+    └── archives/              <i>済んだフェーズの作業記録</i></pre>
+
+<p>
+clack は <strong>revision <code>c5975f9</code> に固定</strong> (<code>trisphere</code> / <code>egui-clap-host</code> と揃える)。
+GUI は <code>egui</code> + <code>egui-baseview</code>、<strong>UI の文字は ASCII のみ</strong> (egui の既定フォントに日本語グリフが無い)。
+</p>
+
+<h3>PhyPiano から何を持ってくるか</h3>
+
+<p><strong>コピーする。パス依存にはしない。</strong>隣が別リポジトリで独立に動くため、参照すると両方が壊れる。重複は許容する。</p>
+
+<div class="tw">
+<table>
+  <thead><tr><th style="width:32%">ファイル</th><th>扱い</th></tr></thead>
+  <tbody>
+    <tr><td><code>modal.rs</code></td><td><strong>ほぼそのまま。</strong>最大の資産 (SIMD 済みの共振器バンク)</td></tr>
+    <tr><td><code>hammer.rs</code></td><td>移植 + 係数とオーバーサンプル倍率の変更</td></tr>
+    <tr><td><code>soundboard.rs</code></td><td>移植 + 全面再校正 + 2 系統化</td></tr>
+    <tr><td><code>reverb.rs</code></td><td><code>room.rs</code> の FDN の出発点にする。<strong>相関の設計を足す</strong></td></tr>
+    <tr><td><code>tools/render</code> <code>tools/analyze</code></td><td><strong>移植。</strong>測り方の資産がここに集まっている</td></tr>
+    <tr><td><code>scaling.rs</code></td><td>設計則の骨格だけ移植。アンカーは全部置き直す</td></tr>
+    <tr><td><code>string.rs</code></td><td>参考にするが書き直す (2 区間・可変打弦点・ダンパー無し)</td></tr>
+    <tr><td><code>engine.rs</code> <code>voice.rs</code></td><td><strong>捨てる。</strong>ボイスプールが無いので構造が違う</td></tr>
+    <tr><td><code>sympathetic.rs</code></td><td><strong>捨てる。</strong>全弦が本物なので不要</td></tr>
+    <tr><td><code>longitudinal.rs</code></td><td>当面見送り。弦が短く張力も低いので寄与は小さいと見込む</td></tr>
+  </tbody>
+</table>
+</div>
+</section>
+
+<!-- ============ 7 ============ -->
+<section id="s7">
+<h2><span class="n">07</span>実装フェーズ</h2>
+
+<div class="note rule">
+<b>全フェーズ共通の完了条件</b> — ① <code>README.md</code> を更新する ② <code>docs/problems.md</code> にそのフェーズで判明した問題・諦めた近似を追記する
+③ <code>cargo test</code> / <code>clippy</code> / <code>fmt</code> が通ることを確認してコミットする ④ <b>数値で確かめてから次に進む。</b>「聞いた感じ」で判断しない
+</div>
+
+<div class="phases">
+
+<div class="phase">
+  <div class="pid">P0</div>
+  <div>
+    <h3>土台</h3>
+    <ul>
+      <li><code>git init</code> + <code>.gitignore</code> + workspace 骨組み + <code>CLAUDE.md</code></li>
+      <li><code>docs/</code> 一式 (本書のコピー・<code>research.md</code>・<code>problems.md</code> の雛形・<code>context.md</code>)</li>
+      <li><code>tools/render</code> / <code>tools/analyze</code> を移植し、減衰正弦波で経路を検証</li>
+    </ul>
+    <div class="done"><h4>完了条件</h4><ul>
+      <li><code>render</code> が書いた WAV の周波数と T60 を <code>analyze</code> が設計値どおりに読み取る</li>
+    </ul></div>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="pid">P1</div>
+  <div>
+    <h3>1 区間の弦 + 硬いハンマー</h3>
+    <ul>
+      <li><code>modal.rs</code> 移植 (スカラで正しさを確定。SIMD は P8)</li>
+      <li><code>hammer.rs</code> — <strong>オーバーサンプル倍率を 4 / 8 / 16 で実測して決める</strong></li>
+      <li><code>segment.rs</code> — 打弦点 <code>x_h/L</code> を可変に</li>
+    </ul>
+    <div class="done"><h4>完了条件</h4><ul>
+      <li>部分音が <code>f_n = n·f0·√(1+Bn²)</code> と一致 (相対誤差 &lt; 1e-6)</li>
+      <li>設計 T60 と実測が 5% 以内</li>
+      <li>打弦点 x/L = 1/8 で第 8 部分音にノッチ</li>
+      <li>接触時間がベロシティに対し単調減少し、<strong>0.1–1.0 ms に収まる</strong></li>
+      <li>オーバーサンプル倍率とデシメーションフィルタ要否の選定根拠を数値で残す</li>
+    </ul></div>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="pid">P2</div>
+  <div>
+    <h3>CLAP 化 — 早期に弾ける状態にする</h3>
+    <ul>
+      <li>clack でノートポート・オーディオポート・最小パラメータ。<strong>出力は最初から 2ch</strong></li>
+      <li>仮の弦バンク (単区間 × 44) を常時回す。ブリッジ結合はまだ無い</li>
+      <li>CLAP の ABI を通す自前ホストのテストを最初から持つ</li>
+    </ul>
+    <div class="done"><h4>完了条件</h4><ul>
+      <li><code>egui-clap-host</code> と DAW で音が出る</li>
+      <li><code>process</code> のアロケーション 0 を機械的に保証</li>
+    </ul></div>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="pid">P3</div>
+  <div>
+    <h3>楽器全体 — 配置表・全弦常時・ロール</h3>
+    <ul>
+      <li><code>layout.rs</code> — 15/14 の配置表、MIDI → 弦・区間の割当、重複音高の選択規則</li>
+      <li><code>scaling.rs</code> — 長さと目標周波数から線密度・線径・張力・B・T60 を導く</li>
+      <li><code>instrument.rs</code> — 全弦を常時走らせる。ノートオフを捨て、ミュート CC を入れる</li>
+    </ul>
+    <div class="done"><h4>完了条件</h4><ul>
+      <li><code>render --table</code> が 44 音ぶんの設計表を出し、<strong>導かれた線径が文献値の範囲に入る</strong></li>
+      <li>同じ弦を連打したとき振幅が足し込まれる (リセットされない) ことをテストで固定</li>
+      <li>最悪ケース (全 44 音を叩いた直後) の CPU を criterion で測る</li>
+    </ul></div>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="pid">P4</div>
+  <div>
+    <h3>ブリッジ結合 — この音源の中身</h3>
+    <ul>
+      <li>段階 A: 一方向注入。反対区間が 5 度で鳴る</li>
+      <li>段階 B: ブリッジ点を共有する双方向。ランク1の陰的解</li>
+      <li>コースあたり 2 本を<strong>本物の 2 バンク</strong>にし、<strong>打弦時刻を 0–0.3 ms ばらつかせる</strong></li>
+    </ul>
+    <div class="done"><h4>完了条件</h4><ul>
+      <li>片側を叩いて反対側に 5 度が立つことをスペクトルで確認</li>
+      <li>うなりを <code>analyze --modulation</code> (帯域包絡の変動深さ) で測る。<strong>部分音のピーク位置では測れない</strong></li>
+      <li>段階 B が 60 秒の連続演奏で発散しない (エネルギーの単調性)</li>
+    </ul></div>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="pid">P5</div>
+  <div>
+    <h3>響板と箱</h3>
+    <ul>
+      <li><code>soundboard.rs</code> 移植 + ブリッジ 2 系統の入力・出力分離</li>
+      <li><code>cabinet.rs</code> — ヘルムホルツ + 板最低次の 2 自由度結合</li>
+      <li>出力段のソフトクリップ</li>
+    </ul>
+    <div class="done"><h4>完了条件</h4><ul>
+      <li><code>render --soundboard</code> で響板だけの IR を出し、<code>analyze --bands</code> で 1/2 オクターブバンドの絶対レベルを読める</li>
+      <li><strong>ヘッドルーム</strong> — 全 44 音を ff で叩いてもピークが 1.0 を超えない。物理を曲げずに出力段で解決する</li>
+    </ul></div>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="pid">P6</div>
+  <div>
+    <h3>ROOM — X-Y ステレオ</h3>
+    <ul>
+      <li>直接音の指向性 — 響板 2 系統に角度と距離を与え、カーディオイド行列を通す</li>
+      <li>初期反射 — 鏡像法で 12–20 タップ。到来角ごとに同じ行列</li>
+      <li>後部残響 — FDN 8 ライン。<strong>L/R の相関を設計する</strong></li>
+      <li>Mic Distance / X-Y Angle / Room Size / Wall Absorption / Room on-off</li>
+    </ul>
+    <div class="done"><h4>完了条件</h4><ul>
+      <li><strong>L/R 相互相関のピークが遅延 0 にある</strong></li>
+      <li>モノ和 L+R の帯域の谷が −3 dB 以内</li>
+      <li>音源角に対する L/R レベル差が理論値と 0.5 dB 以内で一致</li>
+      <li>相関係数 — 直接音区間 &gt; 0.9、残響区間 0.5–0.8</li>
+      <li>RT60 と ITDG が設定した部屋と整合</li>
+    </ul></div>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="pid">P7</div>
+  <div>
+    <h3>演奏表現</h3>
+    <ul>
+      <li>打弦点 CC、ハンマーの当たり面 (木 / レザー / フェルト) 切り替え</li>
+      <li>ミュート (手のひら)、ハーモニクス、ブリッジ位置 (純正 ⇔ 平均律)</li>
+      <li>ツィンバロム用のダンパーペダルを<strong>オプションとして</strong>外付け</li>
+    </ul>
+    <div class="done"><h4>完了条件</h4><ul>
+      <li>打弦点を 0.03 → 0.30 と掃引したとき、スペクトル重心が単調に下がり、ノッチ位置が <code>L/x_h</code> に追随する</li>
+    </ul></div>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="pid">P8</div>
+  <div>
+    <h3>最適化</h3>
+    <ul>
+      <li><code>modal.rs</code> を <code>f32x8</code> に SIMD 化 (PhyPiano Phase 7 の移植)</li>
+      <li><code>active</code> 判定、<code>note_on</code> のコスト削減 (位相漸化式)</li>
+    </ul>
+    <div class="done"><h4>完了条件</h4><ul>
+      <li>最悪ケース (全弦アクティブ + ROOM on) で <strong>CPU 25% 未満</strong></li>
+      <li>ベンチの数値を <code>context.md</code> の表に固定する</li>
+    </ul></div>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="pid">P9</div>
+  <div>
+    <h3>GUI とプリセット</h3>
+    <ul>
+      <li>egui エディタ (<strong>UI は英語</strong>)、プリセット保存/復元、状態の永続化</li>
+      <li>ROOM のマイク位置を図で操作できると分かりやすい (楽器とマイクの俯瞰)</li>
+    </ul>
+    <div class="done"><h4>完了条件</h4><ul>
+      <li><code>README.md</code> の実機確認チェックリストを DAW で通す</li>
+      <li>自動テストでは出ない不具合が必ずあると想定する (PhyPiano は 3 件出した)</li>
+    </ul></div>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="pid">P10</div>
+  <div>
+    <h3>音色の追い込み — 参照音源を持たない前提で</h3>
+    <p>
+      PhyPiano は Phase 8 まで終えてから参照音源と並べ、<strong>Phase 9・10 を丸ごと追加することになった</strong>。
+      同じことが起きるので枠を置く。ただし本プロジェクトは参照を持たないので <code>--compare</code> が使えない。
+      代わりに<strong>参照なしで測れる指標</strong>を先に用意する。
+    </p>
+    <div class="tw"><table>
+      <thead><tr><th>見るもの</th><th>判定の基準</th></tr></thead>
+      <tbody>
+        <tr><td>音域間の一貫性</td><td>隣接コースで明るさが急に飛ばない</td></tr>
+        <tr><td>減衰の音域傾向</td><td>高音ほど短い。逆転していないか</td></tr>
+        <tr><td>打弦点の効き</td><td>スペクトル重心が単調。ノッチが追随</td></tr>
+        <tr><td>物理量の妥当性</td><td><strong>線径・張力・接触時間・B が文献値の範囲</strong></td></tr>
+        <tr><td>過渡と定常の比</td><td>打撃音が音そのものより大きくないか</td></tr>
+      </tbody>
+    </table></div>
+    <div class="done"><h4>運用ルール</h4><ul>
+      <li><strong>測定は必ず ROOM off。</strong>部屋は粗を隠す</li>
+      <li>音色の判断はユーザーの試聴に頼る。ただし<strong>耳の指摘をそのままパラメータに反映しない</strong> — まず上表のどれが動いているかを測ってから触る</li>
+    </ul></div>
+  </div>
+</div>
+
+</div>
+</section>
+
+<!-- ============ 8 ============ -->
+<section id="s8">
+<h2><span class="n">08</span>検証方法</h2>
+
+<p>PhyPiano の「測って確かめる」をそのまま引き継ぐ。<strong>指標を先に作ってからモデルを触る。</strong></p>
+
+<h4>単体テスト</h4>
+<ul>
+  <li>モーダル周波数・T60・打弦点ノッチ・接触時間の物理レンジ</li>
+  <li>連打で振幅が足し込まれる (弦がリセットされない)</li>
+  <li>ブリッジ結合が 60 秒でエネルギー発散しない</li>
+  <li>ROOM の L/R 相互相関ピークが遅延 0</li>
+  <li><code>process</code> のアロケーション 0</li>
+</ul>
+
+<h4>オフライン検証</h4>
+<ul>
+  <li><strong><code>--peak 0</code> を付ける。</strong>既定の正規化で A/B の差が消える (PhyPiano の頻出事故)</li>
+  <li>A/B フラグ — <code>--no-room</code> / <code>--no-bridge-coupling</code> / <code>--no-cabinet</code> / <code>--strike-point</code> / <code>--hammer</code> / <code>--strings</code></li>
+  <li><code>--modulation</code> (帯域包絡の変動深さ) — うなりはここにしか出ない</li>
+  <li><code>--correlation</code> — L/R 相関と相互相関のピーク位置</li>
+</ul>
+
+<h4>性能</h4>
+<ul>
+  <li>criterion。<strong>最悪ケース (全弦アクティブ) を測る。</strong>平均ではない</li>
+</ul>
+</section>
+
+<!-- ============ 9 ============ -->
+<section id="s9">
+<h2><span class="n">09</span>危険</h2>
+
+<p>着手前に分かっている、計画を壊しうるもの。</p>
+
+<div class="tw">
+<table>
+  <thead><tr><th style="width:8%"></th><th style="width:42%">内容</th><th>対処</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="sev hi">大</span></td>
+      <td><strong>モードの打ち切りがアタックを殺す。</strong>打弦点が x/L = 0.05 まで寄るので第 20 部分音まで強く励振される。上限 128 で足りない可能性</td>
+      <td>P1 で上限を振って測る。足りなければ上限を上げる (演算量に余裕がある) か、高域を残差合成へ</td>
+    </tr>
+    <tr>
+      <td><span class="sev hi">大</span></td>
+      <td><strong>参照音源を持たない。</strong>「参照より何 dB 暗い」で判断できない。PhyPiano が音質の追い込みで使った主要な梃子が無い</td>
+      <td>物理量が文献値の範囲に入ることを唯一の外部基準として厳守する (P1 / P3 の完了条件)。音色の判断はユーザーの試聴</td>
+    </tr>
+    <tr>
+      <td><span class="sev hi">大</span></td>
+      <td><strong>ブリッジ双方向結合の安定性。</strong>ループを閉じるので発散しうる</td>
+      <td>段階 A で音を成立させてから B。B は陰的解のみ。エネルギーの単調性をテストで固定</td>
+    </tr>
+    <tr>
+      <td><span class="sev mid">中</span></td>
+      <td><strong>ROOM が粗を隠す。</strong>残響は測定の分解能を奪う。PhyPiano では響板の 0.3 秒でさえ測定を頭打ちにした</td>
+      <td>P6 以降も音質判断は必ず ROOM off。<code>--no-room</code> を既定にする案も検討する</td>
+    </tr>
+    <tr>
+      <td><span class="sev mid">中</span></td>
+      <td><strong>ヘッドルーム。</strong>ダンパーが無く全弦が鳴り続ける。さらに残響が乗る。ピアノより厳しい</td>
+      <td>物理を曲げない。校正の基準を「ff のロール」に置き、出力段のソフトクリップで受ける</td>
+    </tr>
+    <tr>
+      <td><span class="sev mid">中</span></td>
+      <td><strong>オーバーサンプル倍率。</strong>硬いハンマーは 4 倍では解けない見込み</td>
+      <td>P1 で 4/8/16 を実測。倍率はハンマー面ごとに変えてよい</td>
+    </tr>
+    <tr>
+      <td><span class="sev mid">中</span></td>
+      <td><strong>配置表の一次資料。</strong>15/14 の音の並びは資料により差がある</td>
+      <td>表駆動にして差し替え可能にする。特定の 1 台に合わせない</td>
+    </tr>
+    <tr>
+      <td><span class="sev lo">小</span></td>
+      <td><code>note_on</code> のコスト。打弦点可変で <code>sin</code> をモード数ぶん計算する</td>
+      <td>ベンチで測る。必要なら位相漸化式</td>
+    </tr>
+    <tr>
+      <td><span class="sev lo">小</span></td>
+      <td>GUI の埋め込みは DAW でしか検証できない</td>
+      <td>自動化しない。ユーザーに確認を依頼する</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+</section>
+
+<!-- ============ 10 ============ -->
+<section id="s10">
+<h2><span class="n">10</span>決まっていること</h2>
+
+<p><strong>動かさない。</strong>変えるときは影響範囲を測ってから。</p>
+
+<div class="tw">
+<table>
+  <thead><tr><th style="width:22%"></th><th style="width:34%">決定</th><th>影響</th></tr></thead>
+  <tbody>
+    <tr><td>対象楽器</td><td><strong>アメリカ式ハンマーダルシマー 15/14</strong> (ダンパー無し、木のハンマー、コース 2 本)</td><td>ツィンバロム / サントゥールは配置表と弦本数の差し替えで後から乗せる。最初から作り込まない</td></tr>
+    <tr><td>空間</td><td><strong>X-Y ステレオの ROOM を内蔵する</strong> (P6)</td><td>音高依存パンは廃す。定位は楽器の幾何とマイクの指向性から出す</td></tr>
+    <tr><td>参照音源</td><td><strong>持たない。</strong>設計則と文献値の範囲だけで進める</td><td>P10 を「参照との比較」から「参照なしで測れる指標 + 試聴」に置き換えた</td></tr>
+    <tr><td>PhyPiano のコード</td><td><strong>コピーして独立させる</strong></td><td>重複は許容。パス依存にしない</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h4>未決 — 着手時に判断すればよいもの</h4>
+<ul>
+  <li><strong>マイクロチューニング</strong> (<code>.tun</code> / <code>.scl</code>)。PhyPiano から丸ごと移植できる資産だが、この楽器の主要件ではない。P7 以降のオプションとして保留。
+  ただし<strong>ブリッジ位置による純正 5 度 ⇔ 平均律の切り替えは物理から出る</strong>ので P7 に含む</li>
+</ul>
+
+<h4>守ること</h4>
+<ul>
+  <li>各フェーズごとにコミットする。着手前にリポジトリがコミット済みか確認する</li>
+  <li><strong>ファイル編集は Edit / Write ツールのみ</strong> (<code>CLAUDE.md</code>)。<code>cargo fmt</code> は可</li>
+  <li><strong>GUI の確認はユーザーに依頼する。</strong>自分で DAW を起動しない</li>
+  <li>UI の文字は ASCII のみ</li>
+  <li>VST3 / AU は対象外。<code>clap-wrapper</code> を後から被せられる構成を維持する</li>
+</ul>
+
+<p class="colophon">
+  一次資料と手法の比較は <code>docs/research.md</code>。既知の問題は <code>docs/problems.md</code> (D-001〜)。
+  本書は Artifact が正で、<code>docs/plan.html</code> はそのコピー — 計画を直すときは Artifact 側を更新してからコピーし直す。
+</p>
+</section>
+
+</main>
+</div>
+</div>
+
+<script>
+(function () {
+  var g = document.getElementById('xy-polar');
+  if (!g) return;
+
+  var MX = 320, MY = 300, SCALE = 152;
+
+  // cardioid: r(theta) = 0.5 + 0.5*cos(theta - axis), theta measured from front (up), clockwise positive
+  function polar(axisDeg, from, to) {
+    var pts = [];
+    for (var d = from; d <= to; d += 2) {
+      var th = d * Math.PI / 180;
+      var r = 0.5 + 0.5 * Math.cos(th - axisDeg * Math.PI / 180);
+      if (r < 0) r = 0;
+      var x = MX + SCALE * r * Math.sin(th);
+      var y = MY - SCALE * r * Math.cos(th);
+      pts.push(x.toFixed(1) + ',' + y.toFixed(1));
+    }
+    return pts.join(' ');
+  }
+
+  function add(axis, color) {
+    var p = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    p.setAttribute('points', polar(axis, -180, 180));
+    p.setAttribute('fill', color);
+    p.setAttribute('fill-opacity', '0.10');
+    p.setAttribute('stroke', color);
+    p.setAttribute('stroke-width', '1.5');
+    p.setAttribute('stroke-opacity', '0.75');
+    g.appendChild(p);
+  }
+
+  add(-45, 'var(--steel)');
+  add(45, 'var(--bronze)');
+})();
+</script>

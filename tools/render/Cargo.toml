@@ -1,0 +1,18 @@
+[package]
+name = "phydulcimer-render"
+description = "Offline renderer for PhyDulcimer (model output -> WAV)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "phydulcimer-render"
+path = "src/main.rs"
+
+[dependencies]
+phydulcimer-core.workspace = true
+hound.workspace = true
+
+[dev-dependencies]
+approx.workspace = true
