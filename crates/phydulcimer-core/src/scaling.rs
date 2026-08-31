@@ -274,7 +274,61 @@ const COURSE_GAIN_ANCHORS_DB: &[(f64, f64)] = &[
     (784.0, -5.6),
 ];
 
-/// コースの基音に応じた出力ゲイン (線形、音域バランス用)。
+/// (log2 f, dB) 折れ線の補間。範囲外は端の値で一定。
+fn interp_db_anchors(anchors: &[(f64, f64)], f_hz: f64) -> f64 {
+    let f = f_hz.clamp(anchors[0].0, anchors[anchors.len() - 1].0);
+    anchors
+        .windows(2)
+        .find(|w| f <= w[1].0)
+        .map(|w| {
+            let t = (f / w[0].0).log2() / (w[1].0 / w[0].0).log2();
+            w[0].1 + t * (w[1].1 - w[0].1)
+        })
+        .unwrap_or(anchors[anchors.len() - 1].1)
+}
+
+/// 半音階配置 (E3–E6) のコースゲイン補正 [dB] (Phase 7、D-022)。
+///
+/// **15/14 の校正表 ([`COURSE_GAIN_ANCHORS_DB`]) の上に重ねる差分。**
+/// 15/14 表は系統的な傾き (響板 tilt・箱・ブリッジ重み) を近似的に写すが、
+/// 半音階は弦の設計 (長さ・線密度) が違うため鍵ごとの残差が ±4.8 LU 残った
+/// (2026-08-31 の掃引、ff・3 s・ROOM off)。この表はその残差の打ち消しで、
+/// **アンカー = 各コースの右側 f0** (ゲインはコース周波数でしか引かれない
+/// ので実質ルックアップ)。共有コース対 (75↔82 等) は残差を折半した。
+const CHROMATIC_GAIN_CORRECTION_DB: &[(f64, f64)] = &[
+    (164.81, 0.0),
+    (174.61, -0.6),
+    (185.00, -1.1),
+    (196.00, -4.0),
+    (207.65, -2.4),
+    (220.00, -1.7),
+    (233.08, -1.4),
+    (246.94, -2.0),
+    (261.63, -2.1),
+    (277.18, -4.0),
+    (293.66, -3.1),
+    (311.13, -2.5),
+    (329.63, -4.5),
+    (349.23, 0.1),
+    (369.99, 0.4),
+    (392.00, 0.2),
+    (415.30, -0.5),
+    (440.00, 0.0),
+    (466.16, 0.1),
+    (493.88, 2.1),
+    (523.25, 4.6),
+    (554.37, 1.0),
+    (587.33, 2.9),
+    (622.25, 0.3),
+    (659.26, -1.9),
+    (698.46, -1.4),
+    (739.99, -4.2),
+    (783.99, -1.6),
+    (830.61, -0.3),
+    (880.00, -0.8),
+];
+
+/// コースの基音に応じた出力ゲイン (線形、音域バランス用)。**15/14 の校正。**
 ///
 /// アンカー間は (log2 f, dB) 平面の折れ線、範囲外は端の値で一定。
 /// トレブルコースは**右区間の f0** で引くこと — 左区間は同じ弦で同時に
@@ -282,18 +336,23 @@ const COURSE_GAIN_ANCHORS_DB: &[(f64, f64)] = &[
 /// 右側 f0 のゲインを受ける。実測でこの折衷は ±1.5 LU に収まっている)。
 ///
 /// 音色には触れない: 励振・結合・減衰はそのままで、ブリッジ出力の
-/// 振幅だけが変わる。
+/// 振幅だけが変わる。配置を指定する場合は [`course_gain_for`]。
 pub fn course_gain(course_f0_hz: f64) -> f64 {
-    let anchors = COURSE_GAIN_ANCHORS_DB;
-    let f = course_f0_hz.clamp(anchors[0].0, anchors[anchors.len() - 1].0);
-    let db = anchors
-        .windows(2)
-        .find(|w| f <= w[1].0)
-        .map(|w| {
-            let t = (f / w[0].0).log2() / (w[1].0 / w[0].0).log2();
-            w[0].1 + t * (w[1].1 - w[0].1)
-        })
-        .unwrap_or(anchors[anchors.len() - 1].1);
+    10.0f64.powf(interp_db_anchors(COURSE_GAIN_ANCHORS_DB, course_f0_hz) / 20.0)
+}
+
+/// 配置ごとのコース出力ゲイン (線形)。
+///
+/// 半音階は 15/14 の校正表に [`CHROMATIC_GAIN_CORRECTION_DB`] を重ねる
+/// (D-022)。どちらの配置も 440 Hz は 0 dB (A4 の校正は不動)。
+pub fn course_gain_for(layout: crate::layout::LayoutKind, course_f0_hz: f64) -> f64 {
+    let base_db = interp_db_anchors(COURSE_GAIN_ANCHORS_DB, course_f0_hz);
+    let db = match layout {
+        crate::layout::LayoutKind::Diatonic1514 => base_db,
+        crate::layout::LayoutKind::ChromaticE3E6 => {
+            base_db + interp_db_anchors(CHROMATIC_GAIN_CORRECTION_DB, course_f0_hz)
+        }
+    };
     10.0f64.powf(db / 20.0)
 }
 

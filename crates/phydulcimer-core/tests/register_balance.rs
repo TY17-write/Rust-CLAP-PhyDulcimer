@@ -27,8 +27,15 @@ const TOLERANCE_LU: f64 = 2.5;
 /// 条件は掃引と同じ: vel 1.0・ROOM off・フルチェーン (響板 + 箱)。
 /// 長さはアタック近傍の 400 ms が入れば足りるので 1.5 秒で切る。
 fn m_max_lufs(key: u8) -> f64 {
+    m_max_lufs_with(
+        key,
+        phydulcimer_core::instrument::InstrumentConfig::default(),
+    )
+}
+
+fn m_max_lufs_with(key: u8, config: phydulcimer_core::instrument::InstrumentConfig) -> f64 {
     let n = (SR * 1.5) as usize;
-    let mut engine = DulcimerEngine::new(SR, 64);
+    let mut engine = DulcimerEngine::with_config(SR, 64, config);
     engine.set_room_enabled(false);
     engine.note_on(key, 1.0);
 
@@ -75,6 +82,39 @@ fn every_register_sits_on_the_target_loudness_line() {
             "key {key} が音域バランスから外れた: 実測 {measured:.2} LUFS, \
              ターゲット {target:.2} LUFS (A4 {a4:.2} + {SLOPE_LU_PER_OCT} LU/oct), \
              残差 {residual:+.2} LU (許容 ±{TOLERANCE_LU})"
+        );
+    }
+}
+
+#[test]
+fn the_chromatic_layout_sits_on_its_own_target_line() {
+    // P7 (D-022): 半音階は 15/14 の校正表 + 補正表。2026-08-31 の掃引で
+    // 全 37 鍵が ±0.8 LU に載った。代表鍵で固定する:
+    //   E3 (52)  最低音
+    //   E4 (64)  補正前の残差が最大だった鍵 (+4.5 LU、トレブル最低コース)
+    //   C5 (72)  補正前に最も沈んでいた鍵 (−4.6 LU)
+    //   F#5 (78) 補正前に最も出ていた鍵 (+4.8 LU)
+    //   C#6 (85) 左専用域
+    //   E6 (88)  最高音、左専用
+    use phydulcimer_core::instrument::InstrumentConfig;
+    use phydulcimer_core::layout::LayoutKind;
+    let config = InstrumentConfig {
+        layout: LayoutKind::ChromaticE3E6,
+        ..InstrumentConfig::default()
+    };
+
+    let a4 = m_max_lufs_with(69, config);
+    assert!(a4.is_finite() && a4 < 0.0, "A4 の測定が壊れている: {a4:.2}");
+
+    for key in [52u8, 64, 72, 78, 85, 88] {
+        let octaves = (key as f64 - 69.0) / 12.0;
+        let target = a4 + SLOPE_LU_PER_OCT * octaves;
+        let measured = m_max_lufs_with(key, config);
+        let residual = measured - target;
+        assert!(
+            residual.abs() <= TOLERANCE_LU,
+            "半音階の key {key} が音域バランスから外れた: 実測 {measured:.2} LUFS, \
+             ターゲット {target:.2} LUFS, 残差 {residual:+.2} LU (許容 ±{TOLERANCE_LU})"
         );
     }
 }

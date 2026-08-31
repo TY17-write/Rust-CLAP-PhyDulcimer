@@ -119,7 +119,7 @@ impl Instrument {
                     seg.set_damping(damping);
                     seg
                 });
-                let gain = crate::scaling::course_gain(base.f0_hz) as Sample;
+                let gain = crate::scaling::course_gain_for(config.layout, base.f0_hz) as Sample;
                 BassCourse { strings, gain }
             })
             .collect();
@@ -138,7 +138,7 @@ impl Instrument {
                     let c = if i == 0 { 0.0 } else { cents };
                     TrebleString::new(detuned(right, c), detuned(left, c), damping, sample_rate)
                 });
-                let gain = crate::scaling::course_gain(right.f0_hz) as Sample;
+                let gain = crate::scaling::course_gain_for(config.layout, right.f0_hz) as Sample;
                 TrebleCourse { strings, gain }
             })
             .collect();
