@@ -152,6 +152,12 @@ impl TrebleString {
         f_right + f_left
     }
 
+    /// パームミュート量 0–1。手は弦 1 本を押さえれば両区間に効く。
+    pub fn set_mute(&mut self, amount: f64) {
+        self.right.set_mute(amount);
+        self.left.set_mute(amount);
+    }
+
     pub fn reset(&mut self) {
         self.right.reset();
         self.left.reset();

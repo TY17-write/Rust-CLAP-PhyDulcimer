@@ -574,6 +574,30 @@ fn strike_position_parameter_moves_the_notch() {
 }
 
 #[test]
+fn mute_cc_stops_the_ring() {
+    // Phase 7: パームミュート。CC1 (モジュレーションホイール) で鳴っている
+    // 弦に即座に効く。打鍵後にミュートし、尾部のレベルで比べる。
+    let tail_peak = |mute_value: u8| {
+        let mut rig = Rig::new();
+        let (left, _) = rig.render(80, move |b, ev| {
+            if b == 0 {
+                push_note_on(ev, 0, 60, 0.9);
+            }
+            if b == 10 {
+                ev.push(&MidiEvent::new(0, 0, [0xB0, 1, mute_value]));
+            }
+        });
+        peak(&left[BLOCK * 60..])
+    };
+    let open = tail_peak(0);
+    let muted = tail_peak(127);
+    assert!(
+        muted < open * 0.1,
+        "CC1 (Mute) が効いていない: open {open:.4e} vs muted {muted:.4e}"
+    );
+}
+
+#[test]
 fn hammer_face_parameter_darkens_the_tone() {
     // Phase 7: 撥の面。フェルト (2) は木 (0) より接触が長く、高次が出ない。
     let brightness_with_face = |face: f64| {

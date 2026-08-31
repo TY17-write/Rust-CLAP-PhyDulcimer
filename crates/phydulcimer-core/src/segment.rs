@@ -225,6 +225,18 @@ pub enum Decimation {
     Average,
 }
 
+/// パームミュート最大時 (amount = 1) の**最上モード**の追加減衰 [1/s]。
+///
+/// T60 = 6.91/α なので 69 で T60 ≈ 0.1 s。物理定数ではなく校正値 (D-023):
+/// 手のひらで押さえた弦が「すぐ死ぬが完全な無音ではない」聴感に合わせた。
+pub const MUTE_MAX_DECAY_PER_SEC: f64 = 69.0;
+
+/// パームミュートの基音側の重みの下限 (最上モード比)。
+///
+/// 手のひらは腹を押さえるので基音も減衰するが、高次より遅い。0.3 で
+/// フルミュート時の基音 T60 ≈ 0.33 s (最上モードの 3.3 倍残る)。
+pub const MUTE_FLOOR: f64 = 0.3;
+
 /// 1 区間の弦 + それを叩く撥。
 #[derive(Debug, Clone)]
 pub struct Segment {
@@ -350,6 +362,45 @@ impl Segment {
     pub fn set_strike_ratio(&mut self, ratio: f64) {
         self.strike_ratio = ratio.clamp(0.005, 0.5);
         self.rebuild();
+    }
+
+    /// パームミュート量 0–1 (Phase 7)。
+    ///
+    /// 手のひらで弦を押さえる奏法。手はフェルトと同じく**高い部分音を先に
+    /// 止める**ので、追加減衰はモード次数に応じて増やす。
+    ///
+    /// [`Self::set_damping`] と違い**係数の再構築は起きない** — `ModalBank` の
+    /// モード別追加減衰 (ホットループに既にある乗算) を書き換えるだけなので、
+    /// 鳴っている最中に動かせる (確保なし、RT 可)。
+    ///
+    /// カーブは物理定数ではなく校正値 (D-011 / D-023 の流儀):
+    /// - 最上モードのフルミュート時の追加減衰は T60 ≈ 0.1 s
+    ///   ([`MUTE_MAX_DECAY_PER_SEC`])
+    /// - 基音側の重みの下限は [`MUTE_FLOOR`] (基音が最後まで残る)
+    ///
+    /// `amount = 0` は使用中の全モードに 1.0 を明示的に書き戻す
+    /// (`set_active_modes` が端数レーンの減衰を 0 に均す仕様と干渉しないよう、
+    /// 書くのは `0..partial_count()` だけ)。
+    pub fn set_mute(&mut self, amount: f64) {
+        let amount = amount.clamp(0.0, 1.0);
+        let modes = self.modes;
+        if amount <= 0.0 {
+            for n in 0..modes {
+                self.bank.set_mode_damping(n, 1.0);
+            }
+            return;
+        }
+        for n in 0..modes {
+            let frac = if modes > 1 {
+                n as f64 / (modes - 1) as f64
+            } else {
+                1.0
+            };
+            let weight = MUTE_FLOOR + (1.0 - MUTE_FLOOR) * frac;
+            let alpha = amount * MUTE_MAX_DECAY_PER_SEC * weight;
+            let factor = (-alpha / self.sample_rate).exp();
+            self.bank.set_mode_damping(n, factor as Sample);
+        }
     }
 
     /// 打弦。`velocity_mps` は弦に当たる直前の撥の速度 [m/s]。
@@ -660,6 +711,77 @@ mod tests {
         let measured = 3.0 * std::f64::consts::LN_10 * 0.5 / (early / late).ln();
 
         assert_relative_eq!(measured, design, max_relative = 0.05);
+    }
+
+    // ---- パームミュート (Phase 7) -------------------------------------------
+
+    /// 2 つの窓の振幅から、窓間の減衰量 (early/late 比) を測る。
+    fn attenuation_between_windows(x: &[Sample], freq_hz: f64) -> f64 {
+        let w = (SR * 0.1) as usize;
+        let early = magnitude_at(&x[(SR * 0.05) as usize..(SR * 0.05) as usize + w], freq_hz);
+        let late = magnitude_at(&x[(SR * 0.35) as usize..(SR * 0.35) as usize + w], freq_hz);
+        early / late.max(1e-30)
+    }
+
+    #[test]
+    fn mute_silences_the_ring_quickly() {
+        let tail_rms = |mute: f64| -> f64 {
+            let mut seg = segment();
+            seg.set_mute(mute);
+            let x = render(&mut seg, 2.0, 1.0);
+            let tail = &x[(SR * 0.8) as usize..];
+            (tail.iter().map(|&v| (v as f64) * (v as f64)).sum::<f64>() / tail.len() as f64).sqrt()
+        };
+        let open = tail_rms(0.0);
+        let muted = tail_rms(1.0);
+        assert!(
+            muted < open * 0.05,
+            "ミュートで響きが止まらない: open {open:.3e} vs muted {muted:.3e}"
+        );
+    }
+
+    #[test]
+    fn mute_kills_high_partials_faster_than_the_fundamental() {
+        // 手のひらはフェルト同様、高い部分音を先に止める (モード別の重み)。
+        // 同じ窓間の減衰量の比で見る: ミュート時は高次/基音の減衰比が開く。
+        let ratio = |mute: f64| -> f64 {
+            let mut seg = segment();
+            seg.set_mute(mute);
+            let x = render(&mut seg, 2.0, 0.6);
+            let p = *seg.params();
+            attenuation_between_windows(&x, p.partial_hz(20))
+                / attenuation_between_windows(&x, p.partial_hz(1))
+        };
+        let open = ratio(0.0);
+        let muted = ratio(1.0);
+        assert!(
+            muted > open * 2.0,
+            "ミュートの高次優先が出ていない: open {open:.3} vs muted {muted:.3}"
+        );
+    }
+
+    #[test]
+    fn releasing_the_mute_restores_the_ring() {
+        // 1.0 → 0.0 と戻したとき、減衰が完全に復帰すること
+        // (モード別減衰の書き戻し漏れの回帰テスト)。
+        let mut muted_once = segment();
+        muted_once.set_mute(1.0);
+        muted_once.set_mute(0.0);
+        let x_restored = render(&mut muted_once, 2.0, 1.0);
+
+        let mut never = segment();
+        let x_never = render(&mut never, 2.0, 1.0);
+
+        let rms = |x: &[Sample]| -> f64 {
+            let tail = &x[(SR * 0.8) as usize..];
+            (tail.iter().map(|&v| (v as f64) * (v as f64)).sum::<f64>() / tail.len() as f64).sqrt()
+        };
+        let restored = rms(&x_restored);
+        let reference = rms(&x_never);
+        assert!(
+            restored > reference * 0.9 && restored < reference * 1.1,
+            "ミュート解除で減衰が復帰しない: {restored:.3e} vs {reference:.3e}"
+        );
     }
 
     // ---- 打弦点 ------------------------------------------------------------

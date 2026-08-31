@@ -74,8 +74,10 @@ pub struct Instrument {
     treble: Vec<TrebleCourse>,
     /// 打弦点 x/L。次の打撃から効く
     strike_ratio: f64,
-    /// 現在の撥 (Phase 7 で面の切り替えが入る)
+    /// 現在の撥 (面は [`Self::set_hammer_face`] で切り替わる)
     hammer: HammerParams,
+    /// パームミュート量 0–1。変更検出用 (適用は変わったときだけ)
+    mute: f64,
     /// 打撃ばらつき用の PRNG (xorshift32)。オーディオスレッドで走るので自前
     rng: u32,
 }
@@ -127,6 +129,7 @@ impl Instrument {
             treble,
             strike_ratio: 0.09,
             hammer: HammerParams::wood(),
+            mute: 0.0,
             rng: 0x9E37_79B9,
         }
     }
@@ -153,6 +156,28 @@ impl Instrument {
     /// ここは値の保存のみ (確保なし、RT 可)。
     pub fn set_hammer_face(&mut self, face: crate::hammer::HammerFace) {
         self.hammer = HammerParams::for_face(face);
+    }
+
+    /// パームミュート量 0–1 (Phase 7)。鳴っている弦に即座に効く。
+    ///
+    /// 全 88 区間へモード別減衰を書き込むので、**値が動いたときだけ**適用する
+    /// (係数の再構築は起きない — [`Segment::set_mute`] 参照)。
+    pub fn set_mute(&mut self, amount: f64) {
+        let amount = amount.clamp(0.0, 1.0);
+        if (amount - self.mute).abs() <= 1e-4 {
+            return;
+        }
+        self.mute = amount;
+        for c in &mut self.bass {
+            for s in &mut c.strings {
+                s.set_mute(amount);
+            }
+        }
+        for c in &mut self.treble {
+            for s in &mut c.strings {
+                s.set_mute(amount);
+            }
+        }
     }
 
     /// ブリッジ結合の強さを変える (検証用)。0 で切断。

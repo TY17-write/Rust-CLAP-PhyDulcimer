@@ -107,6 +107,11 @@ impl DulcimerEngine {
         self.instrument.set_hammer_face(face);
     }
 
+    /// パームミュート量 0–1。鳴っている弦に即座に効く (変わったときだけ適用)。
+    pub fn set_mute(&mut self, amount: f64) {
+        self.instrument.set_mute(amount);
+    }
+
     pub fn set_bridge_coupling(&mut self, k: f64) {
         self.instrument.set_bridge_coupling(k);
     }

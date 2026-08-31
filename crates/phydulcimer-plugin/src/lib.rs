@@ -84,6 +84,12 @@ const CC_STRIKE: u8 = 74;
 /// 0–42 = Wood / 43–84 = Leather / 85–127 = Felt の 3 分割。
 const CC_FACE: u8 = 70;
 
+/// MIDI CC 番号: Mute (CC1 = モジュレーションホイールの慣例に合わせる)。
+///
+/// パームミュートは演奏中に連続で操作するものなので、ホイールが自然。
+/// 0 = 開放、127 = 押さえ切る。
+const CC_MUTE: u8 = 1;
+
 /// パラメータ値 (0–2、丸め) → 撥の面。
 fn face_from_value(value: f32) -> HammerFace {
     match value.round() as i32 {
@@ -227,6 +233,8 @@ impl<'a> PluginAudioProcessor<'a, PhyDulcimerShared, PhyDulcimerMainThread<'a>>
                 let p = &self.shared.params;
                 self.engine
                     .set_hammer_face(face_from_value(p.hammer_face.load()));
+                // エンジン側で値が動いたときだけ全弦へ書き込むので毎バッチでも安い。
+                self.engine.set_mute(p.mute.load() as f64);
                 self.engine.set_room_enabled(p.room.load() >= 0.5);
                 let size = match p.room_size.load().round() as i32 {
                     0 => RoomSize::Small,
@@ -334,7 +342,6 @@ impl PhyDulcimerAudioProcessor<'_> {
                 self.engine
                     .set_hammer_face(face_from_value(self.shared.params.hammer_face.load()));
             }
-            // ミュート CC (手のひら) は Phase 7 でここに入る。
             Some(CoreEventSpace::Midi(event)) => {
                 self.handle_midi(event.data());
             }
@@ -371,6 +378,10 @@ impl PhyDulcimerAudioProcessor<'_> {
                 let value = (amount * 2.0).round();
                 params.set(params::id::HAMMER_FACE, value);
                 self.engine.set_hammer_face(face_from_value(value as f32));
+            }
+            CC_MUTE => {
+                params.set(params::id::MUTE, amount);
+                self.engine.set_mute(amount);
             }
             _ => {}
         }

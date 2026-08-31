@@ -21,6 +21,7 @@ pub mod id {
     pub const ROOM_SIZE: u32 = 6;
     pub const ABSORPTION: u32 = 7;
     pub const HAMMER_FACE: u32 = 8;
+    pub const MUTE: u32 = 9;
 }
 
 /// 1つのパラメータの仕様。
@@ -120,6 +121,17 @@ pub const PARAMS: &[ParamSpec] = &[
         unit: "",
         decimals: 0,
     },
+    ParamSpec {
+        id: id::MUTE,
+        // パームミュート (Phase 7)。0 = 開放、1 = 手のひらで押さえ切る。
+        // 鳴っている弦に即座に効く (高い部分音から先に止まる)。
+        name: b"Mute",
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+        unit: "",
+        decimals: 2,
+    },
 ];
 
 /// `id` に対応する仕様を返す。
@@ -158,6 +170,7 @@ pub struct ParamValues {
     pub room_size: AtomicF32,
     pub absorption: AtomicF32,
     pub hammer_face: AtomicF32,
+    pub mute: AtomicF32,
 }
 
 impl Default for ParamValues {
@@ -178,6 +191,7 @@ impl ParamValues {
             room_size: AtomicF32::new(default_of(id::ROOM_SIZE)),
             absorption: AtomicF32::new(default_of(id::ABSORPTION)),
             hammer_face: AtomicF32::new(default_of(id::HAMMER_FACE)),
+            mute: AtomicF32::new(default_of(id::MUTE)),
         }
     }
 
@@ -194,6 +208,7 @@ impl ParamValues {
             id::ROOM_SIZE => self.room_size.store(v),
             id::ABSORPTION => self.absorption.store(v),
             id::HAMMER_FACE => self.hammer_face.store(v),
+            id::MUTE => self.mute.store(v),
             _ => {}
         }
     }
@@ -209,6 +224,7 @@ impl ParamValues {
             id::ROOM_SIZE => self.room_size.load() as f64,
             id::ABSORPTION => self.absorption.load() as f64,
             id::HAMMER_FACE => self.hammer_face.load() as f64,
+            id::MUTE => self.mute.load() as f64,
             _ => return None,
         })
     }
