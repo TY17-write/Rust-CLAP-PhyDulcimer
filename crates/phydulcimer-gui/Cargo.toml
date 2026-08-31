@@ -1,0 +1,13 @@
+[package]
+name = "phydulcimer-gui"
+description = "PhyDulcimer editor GUI (egui drawing only; no window management)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# 描画のみ。ウィンドウ (egui-baseview) は plugin 側が受け持つ。
+# core への依存は鍵盤の配置表 (Layout) を参照するためだけで、DSP は呼ばない。
+egui.workspace = true
+phydulcimer-core.workspace = true
