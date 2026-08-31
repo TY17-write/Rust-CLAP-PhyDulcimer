@@ -23,7 +23,9 @@ use assert_no_alloc::{assert_no_alloc, AllocDisabler};
 use clack_extensions::audio_ports::{AudioPortInfoBuffer, AudioPortType, PluginAudioPorts};
 use clack_extensions::note_ports::{NoteDialects, NotePortInfoBuffer, PluginNotePorts};
 use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags, PluginParams};
-use clack_host::events::event_types::{NoteChokeEvent, NoteOffEvent, NoteOnEvent, ParamValueEvent};
+use clack_host::events::event_types::{
+    MidiEvent, NoteChokeEvent, NoteOffEvent, NoteOnEvent, ParamValueEvent,
+};
 use clack_host::factory::plugin::PluginFactory;
 use clack_host::prelude::*;
 use clack_plugin::entry::prelude::SinglePluginEntry;
@@ -575,6 +577,80 @@ fn level_parameter_scales_the_output() {
         (full / half - 2.0).abs() < 0.1,
         "Level が線形に効いていない: {half:.4e} → {full:.4e}"
     );
+}
+
+#[test]
+fn midi_cc_controls_the_parameters() {
+    // GUI (Phase 9) が入るまでの操作手段。CC7 = Level、CC74 = Strike Position。
+    // MIDI ダイアレクトの経路が繋がっていることの検証も兼ねる。
+    let peak_with_cc7 = |value: u8| {
+        let mut rig = Rig::new();
+        let (left, _) = rig.render(40, move |b, ev| {
+            if b == 0 {
+                ev.push(&MidiEvent::new(0, 0, [0xB0, 7, value]));
+                push_note_on(ev, 0, 60, 0.8);
+            }
+        });
+        peak(&left)
+    };
+    let quiet = peak_with_cc7(32);
+    let loud = peak_with_cc7(127);
+    assert!(
+        loud > quiet * 2.0,
+        "CC7 (Level) が効いていない: {quiet:.4e} → {loud:.4e}"
+    );
+
+    // CC74 = 127 は x/L = 0.30。第 3 部分音あたりから欠け始める丸い音になる。
+    // 明るさ (高次/低次の比) が CC74 = 0 (x/L = 0.03) より下がることを見る。
+    let brightness_with_cc74 = |value: u8| {
+        let mut rig = Rig::new();
+        let (left, _) = rig.render(80, move |b, ev| {
+            if b == 0 {
+                ev.push(&MidiEvent::new(0, 0, [0xB0, 74, value]));
+                push_note_on(ev, 0, 60, 0.8);
+            }
+        });
+        let f0 = 261.63;
+        let window = &left[BLOCK * 8..BLOCK * 72];
+        let low: f64 = (1..=2).map(|n| magnitude_at(window, f0 * n as f64)).sum();
+        let high: f64 = (6..=14).map(|n| magnitude_at(window, f0 * n as f64)).sum();
+        high / low
+    };
+    let bright = brightness_with_cc74(0);
+    let dark = brightness_with_cc74(127);
+    assert!(
+        bright > dark * 2.0,
+        "CC74 (Strike Position) が効いていない: 明 {bright:.3} vs 暗 {dark:.3}"
+    );
+}
+
+/// D-016 の回帰テスト (ABI 経由)。
+///
+/// DAW のループ再生では、鳴り続けている弦に同じノートが繰り返し落ちる。
+/// 撥の出発位置が弦の変位を無視していたときは、再打弦のたびに非物理的な
+/// 圧縮スパイクが出て正帰還になり、実機で LUFS +66 まで発散した。
+#[test]
+fn looped_restrikes_do_not_diverge() {
+    let mut rig = Rig::new();
+    // 0.21 秒おきに ff で 40 回 = 約 8.5 秒。ループ再生の再現。
+    let blocks = 40 * 40;
+    let (left, _) = rig.render(blocks, |b, ev| {
+        if b % 40 == 0 {
+            push_note_on(ev, 0, 60, 1.0);
+        }
+    });
+
+    assert!(left.iter().all(|s| s.is_finite()), "ループ連打で非有限値");
+    // 定常に達した後 (25 打目以降) でレベルが増え続けていない。
+    let window = |strike: usize| peak(&left[strike * 40 * BLOCK..(strike + 1) * 40 * BLOCK]);
+    let mid = window(25);
+    let late = window(38);
+    assert!(
+        late < mid * 1.5,
+        "ループでレベルが増え続けている: 25 打目 {mid:.4e} → 38 打目 {late:.4e}"
+    );
+    // 音自体は鳴っている。
+    assert!(late > 0.001);
 }
 
 #[test]

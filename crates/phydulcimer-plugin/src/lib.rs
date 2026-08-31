@@ -77,6 +77,18 @@ const SILENCE_THRESHOLD: f32 = 1e-6;
 /// 1 ブロックの偶発的な無音 (打撃直後のゼロクロス近傍など) で眠らないため。
 const SILENT_BLOCKS_TO_SLEEP: u32 = 8;
 
+/// MIDI CC 番号: Level (CC7 = チャンネルボリュームの慣例に合わせる)。
+///
+/// GUI (Phase 9) が入るまで、パラメータを操作する現実的な手段が
+/// ホストのオートメーションしかない。CC でも触れるようにしておくと、
+/// CC 段を持つホスト (egui-clap-host など) から確認できる。
+const CC_LEVEL: u8 = 7;
+
+/// MIDI CC 番号: Strike Position (CC74 = Brightness の慣例に合わせる)。
+///
+/// 0 でブリッジ寄り (x/L = 0.03、明るい)、127 で中央寄り (0.30、丸い)。
+const CC_STRIKE: u8 = 74;
+
 pub struct PhyDulcimerPlugin;
 
 impl Plugin for PhyDulcimerPlugin {
@@ -290,8 +302,38 @@ impl PhyDulcimerAudioProcessor<'_> {
                 self.instrument
                     .set_strike_ratio(self.shared.params.strike_position.load() as f64);
             }
-            // MIDI ダイアレクトも受けるが、Phase 2 で使う CC は無い。
             // ミュート CC (手のひら) は Phase 7 でここに入る。
+            Some(CoreEventSpace::Midi(event)) => {
+                self.handle_midi(event.data());
+            }
+            _ => {}
+        }
+    }
+}
+
+impl PhyDulcimerAudioProcessor<'_> {
+    /// 生の MIDI から必要な CC だけ拾う。
+    ///
+    /// パラメータと同じ `ParamValues` へ書くので、CC とホストのオートメーションは
+    /// 同じ場所を動かす (後勝ち)。
+    fn handle_midi(&mut self, data: [u8; 3]) {
+        // Control Change 以外は使わない。
+        if data[0] & 0xF0 != 0xB0 {
+            return;
+        }
+        let amount = f64::from(data[2]) / 127.0;
+        let params = &self.shared.params;
+
+        match data[1] {
+            CC_LEVEL => params.set(params::id::LEVEL, amount),
+            CC_STRIKE => {
+                let spec = params::spec(params::id::STRIKE_POSITION);
+                if let Some(spec) = spec {
+                    let value = spec.min + amount * (spec.max - spec.min);
+                    params.set(params::id::STRIKE_POSITION, value);
+                    self.instrument.set_strike_ratio(value);
+                }
+            }
             _ => {}
         }
     }

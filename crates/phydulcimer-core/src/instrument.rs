@@ -349,6 +349,46 @@ mod tests {
     }
 
     #[test]
+    fn repeated_ff_strikes_converge_to_a_bounded_roll() {
+        // DAW のループ再生の再現 (D-016)。ff で 0.1 秒おきに 30 回叩き続けても
+        // レベルが収束すること。T60 10 秒・打撃間隔 0.1 秒なら、定常のロールは
+        // 単発の鳴りの十数倍で頭打ちになるはず。
+        //
+        // 撥の出発位置が弦の変位を無視していたときは、鳴っている弦を叩くたびに
+        // 出発の瞬間の圧縮から数千 N のスパイクが出て、ループごとに音が
+        // 大きくなり発散した (実機で LUFS +66 まで上昇)。
+        let mut inst = Instrument::new(SR);
+
+        // 単発の基準: 1 回叩いて 0.5 秒後の持続部のピーク。
+        inst.note_on(60, 1.0);
+        render(&mut inst, 0.5);
+        let single = render(&mut inst, 0.2)
+            .iter()
+            .fold(0.0f32, |a, &b| a.max(b.abs()));
+        inst.reset();
+
+        // 30 連打。
+        let mut windows = Vec::new();
+        for _ in 0..30 {
+            inst.note_on(60, 1.0);
+            let x = render(&mut inst, 0.1);
+            windows.push(x.iter().fold(0.0f32, |a, &b| a.max(b.abs())));
+        }
+
+        assert!(inst.is_finite(), "連打で非有限値が出た");
+        let late = windows[29];
+        let mid = windows[19];
+        assert!(
+            late < single * 50.0,
+            "ロールが収束していない: 単発 {single:.3e} → 30 打目 {late:.3e}"
+        );
+        assert!(
+            late < mid * 1.5,
+            "連打でレベルが増え続けている: 20 打目 {mid:.3e} → 30 打目 {late:.3e}"
+        );
+    }
+
+    #[test]
     fn all_strings_at_once_stay_finite() {
         let mut inst = Instrument::new(SR);
         for key in KEY_MIN..=KEY_MAX {

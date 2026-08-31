@@ -350,9 +350,14 @@ impl Segment {
     ///
     /// **弦の状態はリセットしない。** ダンパーが無いので、鳴っている振動に
     /// 力を足すのが正しい (ロール奏法がこれで自然に出る)。
+    ///
+    /// 撥は**弦の現在位置**から出発させる。静止位置 0 から出発させると、
+    /// 鳴っている弦を叩いたとき出発の瞬間に非物理的な圧縮スパイクが出て、
+    /// ループ再生の再打弦で発散する (D-016)。
     pub fn strike(&mut self, velocity_mps: f64) {
-        self.hammer.strike(velocity_mps);
-        self.prev_displacement = self.bank.displacement_at_strike() as f64;
+        let displacement = self.bank.displacement_at_strike() as f64;
+        self.hammer.strike_at(velocity_mps, displacement);
+        self.prev_displacement = displacement;
     }
 
     /// 弦の状態を消す。テストと初期化のためのもので、演奏では使わない。

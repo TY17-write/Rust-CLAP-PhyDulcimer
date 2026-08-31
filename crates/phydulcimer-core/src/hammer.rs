@@ -280,11 +280,31 @@ impl Hammer {
         self.velocity
     }
 
-    /// 打鍵。`velocity_mps` は弦に当たる直前のハンマー速度 [m/s]。
+    /// 打弦。`velocity_mps` は弦に当たる直前のハンマー速度 [m/s]。
     ///
     /// 実機では pp で 0.5 m/s 程度、ff で 6 m/s 程度。
+    /// 弦の静止位置 (0) から出発する。**鳴っている弦を叩くときは
+    /// [`Self::strike_at`] を使うこと** — 出発位置が弦の現在位置と食い違うと、
+    /// 出発の瞬間に非物理的な圧縮が生じる (D-016)。
     pub fn strike(&mut self, velocity_mps: f64) {
-        self.position = 0.0;
+        self.strike_at(velocity_mps, 0.0);
+    }
+
+    /// 打弦。撥を `start_position` [m] から出発させる。
+    ///
+    /// # なぜ出発位置が要るか (D-016)
+    ///
+    /// 鳴っている弦は打弦点が変位している (強打後で ±数 mm)。撥を常に 0 から
+    /// 出発させると、弦が撥側 (負) に変位している瞬間に叩いたとき、**出発の
+    /// 瞬間に有限の圧縮 `Δ = 0 − y_s` が生じ、`K·Δ^p` で数千 N のスパイク**が
+    /// 出る。音が大きいほどスパイクも大きくなるので、DAW のループ再生の
+    /// 再打弦で正帰還になり発散する (実機で LUFS +66 まで上昇、テストでは
+    /// 30 連打で非有限値に到達した)。
+    ///
+    /// 呼び出し側は弦の現在変位を渡す。圧縮 0 (弦の表面) から接触が始まり、
+    /// 力は連続に立ち上がる。
+    pub fn strike_at(&mut self, velocity_mps: f64, start_position: f64) {
+        self.position = start_position;
         self.velocity = velocity_mps.max(0.0);
         self.state = if self.velocity > 0.0 {
             HammerState::Approaching
