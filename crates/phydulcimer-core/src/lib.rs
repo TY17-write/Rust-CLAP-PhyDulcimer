@@ -25,7 +25,9 @@
 
 #![forbid(unsafe_code)]
 
+pub mod cabinet;
 pub mod course;
+pub mod engine;
 pub mod hammer;
 pub mod instrument;
 pub mod layout;
@@ -33,6 +35,7 @@ pub mod modal;
 pub mod scaling;
 pub mod segment;
 pub mod smoke;
+pub mod soundboard;
 
 /// オーディオ処理で使う標本の型。
 ///

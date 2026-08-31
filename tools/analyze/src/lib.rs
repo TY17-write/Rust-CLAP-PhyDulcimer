@@ -533,6 +533,49 @@ pub fn modulation_depth(
     })
 }
 
+/// 1/2 オクターブバンドのレベル。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BandLevel {
+    /// バンド中心 [Hz]
+    pub center_hz: f64,
+    /// バンド内の 1/12 オクターブ格子点の振幅の RMS (dB)
+    pub level_db: f64,
+}
+
+/// 1/2 オクターブバンドの絶対レベルを測る (31.5 Hz 〜 16 kHz)。
+///
+/// 響板のインパルス応答 (`render --soundboard`) の校正用。バンド内に
+/// 1/12 オクターブ間隔で Goertzel を置き、振幅の RMS を取る。
+/// 個々のモードの山谷 (20–30 dB 振れる) を均して帯域の傾向を読むための道具で、
+/// **1 本ずつのピークで判断しないこと** (PhyPiano P-038 の教訓)。
+pub fn band_levels(samples: &[f32], sample_rate: f64) -> Vec<BandLevel> {
+    let mut out = Vec::new();
+    let mut center = 31.5;
+    while center < 17_000.0 && center < sample_rate * 0.45 {
+        let lo = center / 2.0f64.powf(0.25);
+        let hi = center * 2.0f64.powf(0.25);
+        // 1/12 オクターブ刻み = 1/2 オクターブバンドに 6 点。
+        let mut acc = 0.0;
+        let mut n = 0;
+        let mut f = lo;
+        while f < hi {
+            let m = goertzel_magnitude(samples, sample_rate, f);
+            acc += m * m;
+            n += 1;
+            f *= 2.0f64.powf(1.0 / 12.0);
+        }
+        if n > 0 {
+            let rms = (acc / n as f64).sqrt();
+            out.push(BandLevel {
+                center_hz: center,
+                level_db: to_db(rms),
+            });
+        }
+        center *= 2.0f64.sqrt();
+    }
+    out
+}
+
 /// 2 つの窓の振幅比から T60 [s] を求める。
 ///
 /// 単一の指数減衰を仮定した粗い推定。ダブルデケイがあると意味を失うが、

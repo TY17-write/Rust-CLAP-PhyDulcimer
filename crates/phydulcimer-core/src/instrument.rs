@@ -250,6 +250,40 @@ impl Instrument {
         out.iter().fold(0.0 as Sample, |a, &b| a.max(b.abs()))
     }
 
+    /// 1 ブロックを**ブリッジごとの 2 バス**へ処理する (上書き)。
+    ///
+    /// バスブリッジとトレブルブリッジは響板の別の位置に立ち (Phase 5)、
+    /// X-Y ROOM では別の角度を持つ (Phase 6)。そのため出力を混ぜずに返す。
+    /// 2 つのスライスは同じ長さであること (短い方に合わせる)。
+    pub fn process_buses(&mut self, bass_out: &mut [Sample], treble_out: &mut [Sample]) -> Sample {
+        let len = bass_out.len().min(treble_out.len());
+        let bass_out = &mut bass_out[..len];
+        let treble_out = &mut treble_out[..len];
+        bass_out.fill(0.0);
+        treble_out.fill(0.0);
+
+        for c in &mut self.bass {
+            for seg in &mut c.strings {
+                for s in bass_out.iter_mut() {
+                    *s += seg.process_sample();
+                }
+            }
+        }
+        for c in &mut self.treble {
+            for string in &mut c.strings {
+                for s in treble_out.iter_mut() {
+                    *s += string.process_sample();
+                }
+            }
+        }
+
+        let mut peak = 0.0 as Sample;
+        for (&b, &t) in bass_out.iter().zip(treble_out.iter()) {
+            peak = peak.max(b.abs()).max(t.abs());
+        }
+        peak
+    }
+
     /// いずれかの撥が飛行・接触中か。眠ってよいかの判定に使う。
     pub fn any_hammer_active(&self) -> bool {
         self.bass

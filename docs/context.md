@@ -26,10 +26,23 @@
 | 2 | CLAP 化 (instrument / plugin / ABI テスト) | ✅ (実機確認 2 回済み) |
 | 3 | 楽器全体 (layout / scaling / ベンチ) | ✅ |
 | 4 | ブリッジ結合・弦 2 本・うなり | ✅ |
-| 5 | 響板と箱 | 未着手 |
-| 6〜10 | (`plan.html` §07) | 未着手 |
+| 5 | 響板と箱 (engine / soundboard / cabinet) | ✅ |
+| 6 | ROOM — X-Y ステレオ | 未着手 |
+| 7〜10 | (`plan.html` §07) | 未着手 |
 
-テスト 161 件、`cargo clippy` / `cargo fmt` ともにクリーン。
+テスト 171 件、`cargo clippy` / `cargo fmt` ともにクリーン。
+
+### Phase 5 で決めたこと
+
+- **経路**: Instrument → 2 バス (バス/トレブルブリッジ) → Soundboard × 2 ゾーン
+  + Cabinet (双峰 110/195 Hz) → tanh ソフトクリップ → L=R。
+  `DulcimerEngine` が束ね、プラグインと render --instrument が共用する
+- **響板は ModalBank の再利用** (200 モード/ゾーン、対数間隔+ジッタ、
+  減衰散らし上限クランプ — PhyPiano P-039 の教訓を最初から)
+- 校正の数値と経緯は [D-020](problems.md)。**IR の校正入口は
+  `render --soundboard` → `analyze --bands`**
+- 校正: ff 単音 −10 dBFS / ff 4 音和音 0.72 / 全 44 ff はクリップが受ける。
+  クレストは響板で**下がらなかった** (39→125、D-013 の予想は外れ — D-020)
 
 ### Phase 4 で決めたこと
 

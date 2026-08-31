@@ -12,8 +12,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use phydulcimer_analyze::{
-    estimate_fundamental, estimate_inharmonicity, estimate_partial_t60_with, estimate_t60,
-    find_partial, goertzel_magnitude, modulation_depth, read_wav, to_db, Wav,
+    band_levels, estimate_fundamental, estimate_inharmonicity, estimate_partial_t60_with,
+    estimate_t60, find_partial, goertzel_magnitude, modulation_depth, read_wav, to_db, Wav,
 };
 
 const USAGE: &str = "\
@@ -40,6 +40,9 @@ OPTIONS:
     --modulation           beating depth per partial (needs --partials).
                            envelope ripple in dB after removing the decay;
                            beating shows up HERE, not in partial peak levels
+    --bands                half-octave band levels (31.5 Hz - 16 kHz).
+                           for calibrating the soundboard IR; do not judge
+                           by single partials (they swing 20-30 dB)
 
     -h, --help             show this help
 
@@ -68,6 +71,7 @@ struct Args {
     t60_window: f64,
     t60_hop: f64,
     modulation: bool,
+    bands: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +97,7 @@ impl Default for Args {
             t60_window: 0.2,
             t60_hop: 0.05,
             modulation: false,
+            bands: false,
         }
     }
 }
@@ -148,6 +153,14 @@ fn run() -> Result<(), String> {
 
     if let Some(f0) = args.partials {
         print_partials(&args, &samples, sr, f0);
+    }
+
+    if args.bands {
+        println!("half-octave band levels:");
+        println!("{:>10}  {:>8}", "center", "dB");
+        for b in band_levels(&samples, sr) {
+            println!("{:>10.1}  {:>8.2}", b.center_hz, b.level_db);
+        }
     }
 
     Ok(())
@@ -295,6 +308,7 @@ fn parse_args(argv: Vec<String>) -> Result<Option<Args>, String> {
             "--t60-window" => args.t60_window = parse_f64(&value()?, "--t60-window")?,
             "--t60-hop" => args.t60_hop = parse_f64(&value()?, "--t60-hop")?,
             "--modulation" => args.modulation = true,
+            "--bands" => args.bands = true,
             other => return Err(format!("不明な引数: {other}")),
         }
     }

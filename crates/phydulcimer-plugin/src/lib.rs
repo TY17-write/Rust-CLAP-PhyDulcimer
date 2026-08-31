@@ -1,13 +1,13 @@
 //! PhyDulcimer の CLAP フロントエンド。
 //!
 //! [clack](https://github.com/prokopyl/clack) で `phydulcimer-core` の
-//! [`Instrument`] をホストに繋ぐだけの薄い層。DSP はすべて core 側にあり、
+//! [`DulcimerEngine`] をホストに繋ぐだけの薄い層。DSP はすべて core 側にあり、
 //! この層はイベントの変換とパラメータの受け渡ししかしない。
 //!
 //! # スレッド分担
 //!
 //! - **メインスレッド**: ホストの UI・オートメーション。パラメータの読み書き
-//! - **オーディオスレッド**: [`Instrument`] の実行。確保・ロック・I/O をしない
+//! - **オーディオスレッド**: [`DulcimerEngine`] の実行。確保・ロック・I/O をしない
 //!
 //! 両者はパラメータをアトミック経由でのみやり取りする。
 //!
@@ -15,8 +15,7 @@
 //!
 //! - **ノートオフを捨てる。** ダンパーが無いので、離鍵しても弦は鳴り続ける。
 //!   ホストの停止 (choke / reset) だけが弦を止める
-//! - 出力は最初から **2ch** (Phase 6 の X-Y ROOM が来る前提)。いまは
-//!   モノラルを両チャンネルへ複製している
+//! - 出力は **2ch** (Phase 5 では L = R。Phase 6 の X-Y ROOM がここを分ける)
 //!
 //! # ビルド
 //!
@@ -41,7 +40,7 @@ use std::fmt::Write as _;
 use std::ops::Bound;
 
 use params::ParamValues;
-use phydulcimer_core::instrument::Instrument;
+use phydulcimer_core::engine::DulcimerEngine;
 
 /// CLAP プラグイン ID (逆ドメイン形式)。公開後は変更しないこと。
 pub const PLUGIN_ID: &str = "jp.ty17.phydulcimer";
@@ -51,18 +50,6 @@ pub const PLUGIN_NAME: &str = "PhyDulcimer";
 
 /// プラグインのバージョン (Cargo のパッケージバージョンに追従)。
 pub const PLUGIN_VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// 出力の校正ゲイン。
-///
-/// [`Instrument`] の出力はブリッジ力の和 [N]。**打撃過渡のスパイクが支配的**で、
-/// ff 単音 (撥 6 m/s) の生ピークは実測 83 N に達する (持続部の部分音振幅は
-/// 1.5 N 程度しかなく、クレストファクタが 20–40 倍ある)。ff 単音のピークが
-/// 約 −9 dBFS に収まるよう 0.35 / 83 ≈ 0.004 とした。
-///
-/// **暫定値** — このスパイクは実機では響板が濾す成分で、Phase 5 で響板が
-/// 入るとクレストファクタごと変わる。そこで校正し直す (→ `docs/problems.md` の
-/// D-013)。
-const CALIBRATED_GAIN: f32 = 0.004;
 
 /// 「鳴っていない」と判定する出力ピークの閾値。
 ///
@@ -155,11 +142,11 @@ impl<'a> PluginMainThread<'a, PhyDulcimerShared> for PhyDulcimerMainThread<'a> {
 
 /// オーディオスレッドで動くプロセッサ。
 pub struct PhyDulcimerAudioProcessor<'a> {
-    instrument: Instrument,
+    engine: DulcimerEngine,
     shared: &'a PhyDulcimerShared,
-    /// 楽器はモノラル出力なので、一度ここへ書いてから両チャンネルへ配る。
-    /// ROOM (Phase 6) が入ると L/R が分かれる
-    mono: Vec<f32>,
+    /// エンジンのステレオ出力を受けてからポートへ配る (事前確保)
+    left: Vec<f32>,
+    right: Vec<f32>,
     /// 連続で無音だったブロック数。[`SILENT_BLOCKS_TO_SLEEP`] に達したら眠る
     silent_blocks: u32,
 }
@@ -176,9 +163,10 @@ impl<'a> PluginAudioProcessor<'a, PhyDulcimerShared, PhyDulcimerMainThread<'a>>
         // 確保はここだけ。activate はメインスレッドで呼ばれるので許される。
         let max_block = (audio_config.max_frames_count as usize).max(1);
         Ok(Self {
-            instrument: Instrument::new(audio_config.sample_rate),
+            engine: DulcimerEngine::new(audio_config.sample_rate, max_block),
             shared,
-            mono: vec![0.0; max_block],
+            left: vec![0.0; max_block],
+            right: vec![0.0; max_block],
             silent_blocks: 0,
         })
     }
@@ -203,7 +191,7 @@ impl<'a> PluginAudioProcessor<'a, PhyDulcimerShared, PhyDulcimerMainThread<'a>>
         // 変わった値を拾うため。同じブロック内のイベントで変わる場合は
         // handle_event 側でも同期する — ここだけだと、パラメータ変更と打鍵が
         // 同じブロックに来たとき、打鍵が古い打弦点を使ってしまう。
-        self.instrument
+        self.engine
             .set_strike_ratio(self.shared.params.strike_position.load() as f64);
 
         let mut block_peak = 0.0f32;
@@ -215,8 +203,9 @@ impl<'a> PluginAudioProcessor<'a, PhyDulcimerShared, PhyDulcimerMainThread<'a>>
             }
 
             // ゲインはイベントを処理した後に読む。同じブロックに Level の変更が
-            // 来ていたら、この区間から効かせる。
-            let gain = self.shared.params.level.load() * CALIBRATED_GAIN;
+            // 来ていたら、この区間から効かせる。校正はエンジンの中にあるので、
+            // ここは音量つまみ (クリップ後) だけ。
+            let gain = self.shared.params.level.load();
 
             let Some((start, end)) = resolve_bounds(event_batch.sample_bounds(), total_frames)
             else {
@@ -224,12 +213,14 @@ impl<'a> PluginAudioProcessor<'a, PhyDulcimerShared, PhyDulcimerMainThread<'a>>
             };
             // activate で確保した長さを超えることは無いはずだが、超えたぶんは
             // 捨てる。オーディオスレッドで確保も panic もしないため。
-            let len = (end - start).min(self.mono.len());
+            let len = (end - start).min(self.left.len());
             if len == 0 {
                 continue;
             }
 
-            let raw_peak = self.instrument.process(&mut self.mono[..len]);
+            let raw_peak = self
+                .engine
+                .process_stereo(&mut self.left[..len], &mut self.right[..len]);
             block_peak = block_peak.max(raw_peak * gain);
 
             for channel in 0..output_channels.channel_count() {
@@ -239,8 +230,12 @@ impl<'a> PluginAudioProcessor<'a, PhyDulcimerShared, PhyDulcimerMainThread<'a>>
                 let Some(dst) = buffer.get_mut(start..start + len) else {
                     continue;
                 };
-                // ROOM (Phase 6) までは L = R。
-                for (d, &s) in dst.iter_mut().zip(&self.mono[..len]) {
+                let src = if channel == 0 {
+                    &self.left
+                } else {
+                    &self.right
+                };
+                for (d, &s) in dst.iter_mut().zip(&src[..len]) {
                     *d = s * gain;
                 }
             }
@@ -249,7 +244,7 @@ impl<'a> PluginAudioProcessor<'a, PhyDulcimerShared, PhyDulcimerMainThread<'a>>
         // **出力が本当に消えたときだけ眠る。** ダンパーが無く T60 が 10 秒を
         // 超える楽器なので、鳴っている最中に眠るとホストが process を止め、
         // 次の打鍵で凍結した響きが再開してポップノイズになる (PhyPiano P-035)。
-        if block_peak < SILENCE_THRESHOLD && !self.instrument.any_hammer_active() {
+        if block_peak < SILENCE_THRESHOLD && !self.engine.any_hammer_active() {
             self.silent_blocks = self.silent_blocks.saturating_add(1);
         } else {
             self.silent_blocks = 0;
@@ -262,14 +257,14 @@ impl<'a> PluginAudioProcessor<'a, PhyDulcimerShared, PhyDulcimerMainThread<'a>>
     }
 
     fn reset(&mut self) {
-        self.instrument.reset();
+        self.engine.reset();
         self.silent_blocks = 0;
     }
 
     fn stop_processing(&mut self) {
         // ホストの停止・ループ折り返し。鳴っている弦を持ち越すと、折り返しの
         // たびに響きが積み上がる。ここで全弦を止める。
-        self.instrument.reset();
+        self.engine.reset();
         self.silent_blocks = 0;
     }
 }
@@ -279,27 +274,27 @@ impl PhyDulcimerAudioProcessor<'_> {
         match event.as_core_event() {
             Some(CoreEventSpace::NoteOn(event)) => {
                 if let Match::Specific(key) = event.key() {
-                    self.instrument.note_on(key as u8, event.velocity());
+                    self.engine.note_on(key as u8, event.velocity());
                 }
             }
             // **ノートオフは捨てる。** ダンパーが無い。`Instrument::note_off` を
             // 経由するのは「実装し忘れ」と区別するため。
             Some(CoreEventSpace::NoteOff(event)) => {
                 if let Match::Specific(key) = event.key() {
-                    self.instrument.note_off(key as u8);
+                    self.engine.note_off(key as u8);
                 }
             }
             // ホストが停止・シーク・シーケンス差し替えのときに送ってくる消音。
             // 無視すると再生を止めたときに音が残り続ける。
             Some(CoreEventSpace::NoteChoke(event)) => match event.key() {
-                Match::Specific(key) => self.instrument.choke(key as u8),
-                Match::All => self.instrument.reset(),
+                Match::Specific(key) => self.engine.choke(key as u8),
+                Match::All => self.engine.reset(),
             },
             Some(CoreEventSpace::ParamValue(event)) => {
                 self.shared.handle_param_event(event);
                 // 打弦点は即座に楽器へ同期する (ただの store で、係数の再構築は
                 // 次の打撃まで起きない)。同じブロックの後続の打鍵に効かせるため。
-                self.instrument
+                self.engine
                     .set_strike_ratio(self.shared.params.strike_position.load() as f64);
             }
             // ミュート CC (手のひら) は Phase 7 でここに入る。
@@ -331,7 +326,7 @@ impl PhyDulcimerAudioProcessor<'_> {
                 if let Some(spec) = spec {
                     let value = spec.min + amount * (spec.max - spec.min);
                     params.set(params::id::STRIKE_POSITION, value);
-                    self.instrument.set_strike_ratio(value);
+                    self.engine.set_strike_ratio(value);
                 }
             }
             _ => {}

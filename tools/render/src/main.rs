@@ -34,6 +34,9 @@ INSTRUMENT (--instrument):
     --vel <0..1>           note velocity (NOT m/s in this mode)   [default: 0.8]
     --strike <0..0.5>      strike point x/L                       [default: 0.09]
     --no-coupling          disconnect the treble bridge coupling (A/B)
+    --raw                  bypass soundboard+cabinet, output bridge force (A/B)
+
+    --soundboard           render the soundboard+cabinet impulse response
 
 COMMON:
     --out <PATH>           write the WAV here      [required except --contact-table]
@@ -78,6 +81,8 @@ enum Mode {
     DesignTable,
     /// 楽器全体 (全弦常時走行) を鳴らす。
     Instrument,
+    /// 響板 + 箱のインパルス応答 (校正用)。
+    Soundboard,
 }
 
 #[derive(Debug, Clone)]
@@ -111,6 +116,7 @@ struct Args {
     // 楽器全体
     keys: Vec<u8>,
     no_coupling: bool,
+    raw: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -160,6 +166,7 @@ impl Default for Args {
 
             keys: Vec::new(),
             no_coupling: false,
+            raw: false,
         }
     }
 }
@@ -189,32 +196,42 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
-    let (buf, note) = match args.mode {
-        Mode::Sine => (render_sine(&args)?, String::new()),
-        Mode::String => render_string(&args)?,
+    let (channels, note) = match args.mode {
+        Mode::Sine => (vec![render_sine(&args)?], String::new()),
+        Mode::String => {
+            let (buf, note) = render_string(&args)?;
+            (vec![buf], note)
+        }
         Mode::Instrument => render_instrument(&args)?,
+        Mode::Soundboard => render_soundboard_ir(&args)?,
         Mode::ContactTable | Mode::DesignTable => unreachable!(),
     };
 
-    let raw_peak = buf.iter().fold(0.0 as Sample, |a, &b| a.max(b.abs()));
+    let raw_peak = channels
+        .iter()
+        .flatten()
+        .fold(0.0 as Sample, |a, &b| a.max(b.abs()));
     if !raw_peak.is_finite() {
         return Err("出力に非有限の値が含まれています".into());
     }
 
-    let mut buf = buf;
+    let mut channels = channels;
     if args.peak > 0.0 && raw_peak > 0.0 {
         let gain = args.peak as Sample / raw_peak;
-        for s in buf.iter_mut() {
-            *s *= gain;
+        for c in channels.iter_mut() {
+            for s in c.iter_mut() {
+                *s *= gain;
+            }
         }
     }
 
-    write_wav(&args.out, &buf, args.sample_rate)?;
+    write_wav(&args.out, &channels, args.sample_rate)?;
 
     println!(
-        "wrote {} ({:.3} s @ {} Hz, raw peak {:.4})",
+        "wrote {} ({} ch, {:.3} s @ {} Hz, raw peak {:.4})",
         args.out.display(),
-        buf.len() as f64 / args.sample_rate,
+        channels.len(),
+        channels[0].len() as f64 / args.sample_rate,
         args.sample_rate,
         raw_peak
     );
@@ -318,9 +335,9 @@ fn render_string(args: &Args) -> Result<(Vec<Sample>, String), String> {
     Ok((buf, note))
 }
 
-/// 楽器全体を鳴らす (Phase 4)。出力はブリッジ力の和 (モノ、校正前)。
-fn render_instrument(args: &Args) -> Result<(Vec<Sample>, String), String> {
-    use phydulcimer_core::instrument::Instrument;
+/// 楽器全体を鳴らす (Phase 5 からはエンジン経由のステレオ)。
+fn render_instrument(args: &Args) -> Result<(Vec<Vec<Sample>>, String), String> {
+    use phydulcimer_core::engine::DulcimerEngine;
 
     if args.dur <= 0.0 {
         return Err(format!("--dur は正の値が必要です: {}", args.dur));
@@ -329,32 +346,72 @@ fn render_instrument(args: &Args) -> Result<(Vec<Sample>, String), String> {
         return Err("--instrument には --key <MIDI> が最低 1 つ必要です".into());
     }
 
-    let mut inst = Instrument::new(args.sample_rate);
-    inst.set_strike_ratio(args.strike);
+    let mut engine = DulcimerEngine::new(args.sample_rate, 64);
+    engine.set_strike_ratio(args.strike);
     if args.no_coupling {
-        inst.set_bridge_coupling(0.0);
+        engine.set_bridge_coupling(0.0);
     }
+    engine.set_raw_output(args.raw);
 
     // --instrument の --vel は MIDI 的な 0–1 (--string の m/s とは違う)。
     let velocity = args.vel.clamp(0.0, 1.0);
     for &key in &args.keys {
-        inst.note_on(key, velocity);
+        engine.note_on(key, velocity);
     }
 
     let n = (args.dur * args.sample_rate).round() as usize;
-    let mut buf = vec![0.0 as Sample; n];
-    for chunk in buf.chunks_mut(64) {
-        inst.process(chunk);
+    let mut left = vec![0.0 as Sample; n];
+    let mut right = vec![0.0 as Sample; n];
+    for start in (0..n).step_by(64) {
+        let end = (start + 64).min(n);
+        // 同じ Vec から 2 つの可変スライスは取れないので、いったん分ける。
+        let mut l = [0.0 as Sample; 64];
+        let mut r = [0.0 as Sample; 64];
+        let len = end - start;
+        engine.process_stereo(&mut l[..len], &mut r[..len]);
+        left[start..end].copy_from_slice(&l[..len]);
+        right[start..end].copy_from_slice(&r[..len]);
     }
 
     let note = format!(
-        "instrument  keys {:?}, vel {:.2}, strike {:.3}, coupling {}",
+        "instrument  keys {:?}, vel {:.2}, strike {:.3}, coupling {}, output {}",
         args.keys,
         velocity,
         args.strike,
         if args.no_coupling { "OFF" } else { "on" },
+        if args.raw {
+            "RAW (bridge force)"
+        } else {
+            "soundboard+cabinet"
+        },
     );
-    Ok((buf, note))
+    Ok((vec![left, right], note))
+}
+
+/// 響板 + 箱のインパルス応答 (校正用)。両バスへ 1 N のインパルスを入れる。
+fn render_soundboard_ir(args: &Args) -> Result<(Vec<Vec<Sample>>, String), String> {
+    use phydulcimer_core::cabinet::{Cabinet, CabinetParams};
+    use phydulcimer_core::soundboard::{Soundboard, SoundboardParams};
+
+    if args.dur <= 0.0 {
+        return Err(format!("--dur は正の値が必要です: {}", args.dur));
+    }
+    let mut sb_bass = Soundboard::new(SoundboardParams::default(), 0xB055, args.sample_rate);
+    let mut sb_treble = Soundboard::new(SoundboardParams::default(), 0x7EB1, args.sample_rate);
+    let mut cabinet = Cabinet::new(CabinetParams::default(), args.sample_rate);
+
+    let n = (args.dur * args.sample_rate).round() as usize;
+    let mut buf = Vec::with_capacity(n);
+    for i in 0..n {
+        let x = if i == 0 { 1.0 } else { 0.0 };
+        buf.push(
+            sb_bass.process_sample(x) + sb_treble.process_sample(x) + cabinet.process_sample(x),
+        );
+    }
+    Ok((
+        vec![buf],
+        "soundboard+cabinet IR (1 N impulse on both buses)".into(),
+    ))
 }
 
 /// 15/14 の設計表 (44 発音位置)。P3 の完了条件の確認に使う。
@@ -492,12 +549,19 @@ fn strike_wall(
     (h.contact_duration() * 1000.0, peak, restitution)
 }
 
-/// 32-bit float のモノ WAV を書く。
+/// 32-bit float の WAV を書く (チャンネル数はスライスの本数)。
 ///
 /// `phydulcimer-analyze` の lib にも同じものがある。共有すれば重複は消えるが、
-/// **レンダラが解析ツールに依存する**という筋の悪い依存方向になる。30 行の
+/// **レンダラが解析ツールに依存する**という筋の悪い依存方向になる。40 行の
 /// 重複のほうが安いと判断した (→ `docs/problems.md` D-003)。
-fn write_wav(path: &Path, buf: &[Sample], sample_rate: f64) -> Result<(), String> {
+fn write_wav(path: &Path, channels: &[Vec<Sample>], sample_rate: f64) -> Result<(), String> {
+    let Some(first) = channels.first() else {
+        return Err("チャンネルがありません".into());
+    };
+    if channels.iter().any(|c| c.len() != first.len()) {
+        return Err("チャンネルの長さが揃っていません".into());
+    }
+
     if let Some(dir) = path.parent() {
         if !dir.as_os_str().is_empty() {
             std::fs::create_dir_all(dir)
@@ -506,7 +570,7 @@ fn write_wav(path: &Path, buf: &[Sample], sample_rate: f64) -> Result<(), String
     }
 
     let spec = hound::WavSpec {
-        channels: 1,
+        channels: channels.len() as u16,
         sample_rate: sample_rate.round() as u32,
         bits_per_sample: 32,
         sample_format: hound::SampleFormat::Float,
@@ -514,10 +578,12 @@ fn write_wav(path: &Path, buf: &[Sample], sample_rate: f64) -> Result<(), String
     let mut writer = hound::WavWriter::create(path, spec)
         .map_err(|e| format!("{} を開けません: {e}", path.display()))?;
 
-    for &s in buf {
-        writer
-            .write_sample(s)
-            .map_err(|e| format!("書き込みに失敗しました: {e}"))?;
+    for i in 0..first.len() {
+        for c in channels {
+            writer
+                .write_sample(c[i])
+                .map_err(|e| format!("書き込みに失敗しました: {e}"))?;
+        }
     }
     writer
         .finalize()
@@ -549,6 +615,8 @@ fn parse_args(argv: Vec<String>) -> Result<Option<Args>, String> {
                     .map_err(|_| "--key は 0–127 です".to_string())?,
             ),
             "--no-coupling" => args.no_coupling = true,
+            "--raw" => args.raw = true,
+            "--soundboard" => args.mode = Mode::Soundboard,
 
             "--out" => args.out = PathBuf::from(value()?),
             "--dur" => args.dur = parse_f64(&value()?, "--dur")?,
