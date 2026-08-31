@@ -1189,7 +1189,7 @@ GUI は <code>egui</code> + <code>egui-baseview</code>、<strong>UI の文字は
     </table></div>
     <div class="done"><h4>運用ルール</h4><ul>
       <li><strong>測定は必ず ROOM off。</strong>部屋は粗を隠す</li>
-      <li>音色の判断はユーザーの試聴に頼る。ただし<strong>耳の指摘をそのままパラメータに反映しない</strong> — まず上表のどれが動いているかを測ってから触る</li>
+      <li>音色の判断は実機での試聴に頼る。ただし<strong>耳の指摘をそのままパラメータに反映しない</strong> — まず上表のどれが動いているかを測ってから触る</li>
     </ul></div>
   </div>
 </div>
@@ -1244,7 +1244,7 @@ GUI は <code>egui</code> + <code>egui-baseview</code>、<strong>UI の文字は
     <tr>
       <td><span class="sev hi">大</span></td>
       <td><strong>参照音源を持たない。</strong>「参照より何 dB 暗い」で判断できない。PhyPiano が音質の追い込みで使った主要な梃子が無い</td>
-      <td>物理量が文献値の範囲に入ることを唯一の外部基準として厳守する (P1 / P3 の完了条件)。音色の判断はユーザーの試聴</td>
+      <td>物理量が文献値の範囲に入ることを唯一の外部基準として厳守する (P1 / P3 の完了条件)。音色の判断は実機での試聴</td>
     </tr>
     <tr>
       <td><span class="sev hi">大</span></td>
@@ -1279,7 +1279,7 @@ GUI は <code>egui</code> + <code>egui-baseview</code>、<strong>UI の文字は
     <tr>
       <td><span class="sev lo">小</span></td>
       <td>GUI の埋め込みは DAW でしか検証できない</td>
-      <td>自動化しない。ユーザーに確認を依頼する</td>
+      <td>自動化しない。DAW での実機確認に委ねる</td>
     </tr>
   </tbody>
 </table>
@@ -1314,14 +1314,14 @@ GUI は <code>egui</code> + <code>egui-baseview</code>、<strong>UI の文字は
 <ul>
   <li>各フェーズごとにコミットする。着手前にリポジトリがコミット済みか確認する</li>
   <li><strong>ファイル編集は Edit / Write ツールのみ</strong> (<code>CLAUDE.md</code>)。<code>cargo fmt</code> は可</li>
-  <li><strong>GUI の確認はユーザーに依頼する。</strong>自分で DAW を起動しない</li>
+  <li><strong>GUI とホスト連携の確認は DAW の実機で行う。</strong>自動化しない</li>
   <li>UI の文字は ASCII のみ</li>
   <li>VST3 / AU は対象外。<code>clap-wrapper</code> を後から被せられる構成を維持する</li>
 </ul>
 
 <p class="colophon">
   一次資料と手法の比較は <code>docs/research.md</code>。既知の問題は <code>docs/problems.md</code> (D-001〜)。
-  本書は Artifact が正で、<code>docs/plan.html</code> はそのコピー — 計画を直すときは Artifact 側を更新してからコピーし直す。
+  現在地と実測値は <code>docs/context.md</code>。
 </p>
 </section>
 

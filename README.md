@@ -38,7 +38,7 @@ Rust で書くハンマーダルシマー物理モデリング音源 (CLAP プ�
 |---|---|---|
 | 0 | ワークスペース骨組み / ドキュメント / オフラインレンダラ・解析ツール | ✅ 完了 |
 | 1 | 1 区間の弦 + 硬い撥 | ✅ 完了 |
-| 2 | CLAP 化 (clack) — 弾ける状態にする | ✅ 完了 (実機確認済み) |
+| 2 | CLAP 化 (clack) — 弾ける状態にする | ✅ 完了 |
 | 3 | 楽器全体 (15/14 配置表・設計則) | ✅ 完了 |
 | 4 | ブリッジ結合 (この音源の中身) | ✅ 完了 |
 | 5 | 響板と箱 | ✅ 完了 |
@@ -48,10 +48,8 @@ Rust で書くハンマーダルシマー物理モデリング音源 (CLAP プ�
 | 9 | GUI とプリセット | 未着手 |
 | 10 | 音色の追い込み | 未着手 |
 
-テスト 135 件、`cargo clippy` / `cargo fmt` ともにクリーン。
-
-**計画の正は Artifact**: https://claude.ai/code/artifact/a650768b-6e46-4ba6-a022-0a3ab186990d
-([`docs/plan.html`](docs/plan.html) はそのコピー)
+テスト 183 件、`cargo clippy` / `cargo fmt` ともにクリーン。
+全体計画とフェーズ構成は [`docs/plan.html`](docs/plan.html)。
 
 ## ビルド
 
@@ -99,62 +97,63 @@ CC とホストのオートメーションは同じ値を動かす (後勝ち)�
 
 ### 実機確認チェックリスト (DAW でしか確認できない)
 
-1. ロードできて音が出るか — **確認済み** (2026-08-31)
-2. **離鍵しても鳴り続けるか** — **確認済み**
-3. 再生停止で音が止まるか / ループ折り返しで音量が増え続けないか —
-   **要再確認**。初回の確認で LUFS +66 まで発散する不具合が見つかり
-   ([D-016](docs/problems.md))、修正済み。ループしても音量が頭打ちに
-   なることを確認してほしい
-4. Level (CC7) / Strike Position (CC74) が効くか — CC 対応を足したので確認可能に
-5. 連打 (ロール) が自然に重なるか — **確認済み** (大きくなっていくのは仕様。
-   ただし D-016 の修正前は際限なく増えた。頭打ちになることを再確認してほしい)
+自動テストは CLAP の ABI までを検証する。以下はホスト実機でのみ確かめられる:
 
-## 使い方 (Phase 1)
+1. ロードできて音が出るか (鍵域は G2–D6 の全音階。外と半音の欠落は無音が正しい)
+2. 離鍵しても鳴り続けるか (切れたらバグ)
+3. 再生停止で音が止まるか / ループ再生で音量が頭打ちになるか
+   (連打で膨らむのはロールの物理として正しいが、際限なく増えたらバグ)
+4. パラメータと CC (CC7 / CC74) がオートメーションに乗るか
+5. L/R の定位 — 低音がやや左、高音がやや右 (楽器の幾何から出る)
 
-弦の 1 区間 (トレブル最低コース、D4) を木・レザー・フェルトの撥で叩ける。
+## 検証ツール (render / analyze)
+
+オフラインのレンダラと解析ツールで、モデルを数値で確かめられる。
 
 ```bash
-# 弦を鳴らす (木の撥、ブリッジ寄り x/L=0.09)
-cargo run --release -p phydulcimer-render -- --string --out out/d4.wav --dur 3.0 --peak 0.9
+# 楽器全体をステレオで鳴らす (和音、X-Y の部屋込み)
+cargo run --release -p phydulcimer-render -- --instrument \
+    --key 55 --key 62 --key 67 --key 74 --vel 0.9 --dur 4.0 --out out/chord.wav --peak 0.9
 
-# 打弦点と撥の面を変える (この楽器の主要な音色操作)
-cargo run --release -p phydulcimer-render -- --string --out out/soft.wav \
-    --strike 0.20 --face felt --vel 1.0 --dur 3.0 --peak 0.9
+# 部屋を切って測定用に (音質の判断は必ずこちらで)
+cargo run --release -p phydulcimer-render -- --instrument --key 69 --no-room --out out/a4.wav
 
-# 部分音・T60・インハーモニシティを測る
-cargo run --release -p phydulcimer-analyze -- --in out/d4.wav --partials 293.66 --count 12 --partial-t60
+# 部分音・T60・インハーモニシティ・うなり
+cargo run --release -p phydulcimer-analyze -- --in out/a4.wav --partials 440 --count 12 --partial-t60
+cargo run --release -p phydulcimer-analyze -- --in out/a4.wav --partials 440 --count 4 --modulation
 
-# 撥の接触時間の表 (剛体壁、音は出ない)
+# X-Y の検証 (相互相関のピークは lag 0 に立つ)
+cargo run --release -p phydulcimer-analyze -- --in out/chord.wav --correlation
+
+# 44 発音位置の設計表 / 響板+箱の IR とバンドレベル / 撥の接触時間
+cargo run --release -p phydulcimer-render -- --table
+cargo run --release -p phydulcimer-render -- --soundboard --out out/ir.wav --dur 1.0
 cargo run --release -p phydulcimer-render -- --contact-table --os 64
-
-# 疎通確認用の減衰正弦波 (Phase 0 の経路検証)
-cargo run --release -p phydulcimer-render -- --out out/smoke.wav --freq 440 --t60 2.0 --dur 3.0
-cargo run --release -p phydulcimer-analyze -- --in out/smoke.wav --f0 --t60
 ```
 
 `-h` で全オプションが出る。
 
 **`--peak` の既定は 0 (正規化しない)。** A/B 比較でレベルが揃って差が消える事故を
-防ぐため、PhyPiano から意図的に変えている。聴くときだけ `--peak 0.9` を付ける。
+防ぐため。聴くときだけ `--peak 0.9` を付ける。
 
-### Phase 1 の実測値 (アナライザ経由の完了条件)
+### 主要な実測値
 
 | 項目 | 設計値 | 実測 |
 |---|---|---|
-| インハーモニシティ B (treble-long) | 1.897e-4 | **1.925e-4** (誤差 1.5%) |
-| 部分音 T60 (n = 1 / 4 / 8) | 2.00 / 1.73 / 1.20 s | **2.001 / 1.730 / 1.203 s** (R² = 1.0000) |
+| インハーモニシティ B (トレブル最低コース) | 1.897e-4 | **1.925e-4** (誤差 1.5%) |
+| 部分音ごとの T60 | 設計どおり | **誤差 0.1% 以内** (R² = 1.0000) |
 | 打弦点 1/8 のノッチ (第 8 部分音) | — | **約 −90 dB** |
-| 壁での接触時間 (木, v=0.5→6 m/s) | 0.1–1.0 ms・単調減少 | **0.28 → 0.17 ms** |
-| オーバーサンプル 16x の収束 (対 64x) | — | 木 **≤1.5 dB** / フェルト **≤0.5 dB** |
-| エイリアスフロア (デシメーションフィルタ無し) | — | **−129 dB 以下** (フィルタ不要と判定) |
+| ユニゾンのうなり (包絡リップル) | — | **32–36 dB** |
+| L/R 相互相関のピーク位置 | lag 0 (X-Y の定義) | **lag 0** (係数 0.95) |
+| 全 44 位置 ff の最悪ケース CPU | < 50% | **484 µs / 1333 µs = 36%** |
 
-全実測値と Phase 0 のぶんは [`docs/context.md`](docs/context.md) §4。
+全実測値と経緯は [`docs/context.md`](docs/context.md) §4。
 
 ## ドキュメント
 
 | 文書 | 内容 |
 |---|---|
-| [`docs/plan.html`](docs/plan.html) | 全体計画とフェーズ構成 (Artifact が正) |
+| [`docs/plan.html`](docs/plan.html) | 全体計画とフェーズ構成 |
 | [`docs/research.md`](docs/research.md) | 楽器の物理と手法選定の根拠、論文サーベイ |
 | [`docs/problems.md`](docs/problems.md) | 既知の問題・意図的に諦めた近似 (D-001〜) |
 | [`docs/context.md`](docs/context.md) | 現在地・判断の理由・実測値・ハマりどころ |
@@ -164,17 +163,18 @@ cargo run --release -p phydulcimer-analyze -- --in out/smoke.wav --f0 --t60
 
 - **参照音源を持たない** ([D-006](docs/problems.md))。物理量が文献値の範囲に入ることが
   唯一の外部基準になる
-- `--partial-t60` は T60 が 0.4 秒を切ると測れない ([D-001](docs/problems.md))
-- 部分音が混在すると、上記の下限より長い T60 でも落ちることがある。原因未特定
-  ([D-002](docs/problems.md))
 - 撥の剛性は物理定数ではなく、接触時間からの校正値 ([D-011](docs/problems.md))
 - 木の撥はチャタリングし、「接触時間の合計」は収束した観測量ではない
   ([D-012](docs/problems.md))
-- 出力の校正は暫定。打撃スパイクが支配的で、持続部は小さめに出る
-  ([D-013](docs/problems.md))
-- 弦バンクは暫定形 (クロマチック 44 鍵・コース 1 本・ブリッジ結合なし)
-  ([D-014](docs/problems.md))
-- 響板は板のシミュレーションではなくフィルタ近似 (Phase 5 で実装予定)
+- 全音階配置なので楽器に無い半音は鳴らない。トレブル左側の音は純正5度の帰結で
+  +2 cent ([D-017](docs/problems.md))
+- ブリッジ結合は撥の接触力の順方向注入。打撃後の持続的な弦間交換 (真の双方向) は
+  未実装 ([D-018](docs/problems.md))
+- 響板は板のシミュレーションではなくフィルタ近似で、箱と合わせてパラメータは
+  校正値。打撃過渡が支配的な音になる ([D-020](docs/problems.md))
+- 音域バランス・音色の追い込みは未着手 (Phase 10)
+
+解消済みの問題も含め、全記録は [`docs/problems.md`](docs/problems.md) (D-001〜)。
 
 ## 参照元
 
@@ -211,9 +211,10 @@ cargo run --release -p phydulcimer-analyze -- --in out/smoke.wav --f0 --t60
 
 ### 実装の供給元
 
-- [`Rust-CLAP-PhyPiano`](../Rust-CLAP-PhyPiano) — モーダル共振器・ハンマー・響板・
-  検証ツールの供給元。**コピーして独立させている** (パス依存は張らない)
-- [clack](https://github.com/prokopyl/clack) — Rust の CLAP バインディング (Phase 2 で使用)
+- Rust-CLAP-PhyPiano (姉妹プロジェクト) — モーダル共振器・ハンマー・響板・
+  検証ツールの供給元。**コピーして独立させている** (パス依存は張らない)。
+  ドキュメント中の P-xxx 番号はあちらの問題記録への参照
+- [clack](https://github.com/prokopyl/clack) — Rust の CLAP バインディング
 - [hound](https://github.com/ruuda/hound) — WAV の読み書き
 
 ## ライセンス

@@ -6,7 +6,7 @@
 
 | 文書 | 内容 |
 |---|---|
-| [`plan.html`](plan.html) | 全体計画とフェーズ構成 (**Artifact が正**) |
+| [`plan.html`](plan.html) | 全体計画とフェーズ構成 (**正は Claude の Artifact** — 下記 §2) |
 | [`research.md`](research.md) | 楽器の物理と手法選定の根拠 |
 | [`problems.md`](problems.md) | 既知の問題・意図的に諦めた近似 (D-001〜) |
 | **このファイル** | **現在地、判断の理由、環境、ハマりどころ** |
@@ -94,7 +94,10 @@ Phase 1 で決めたこと (数値の根拠は [problems.md](problems.md)):
 ## 2. 環境
 
 - ツールチェイン: Rust (`rust-version = "1.85"`, edition 2021) で確認
-- リモート: 未設定 (ローカルのみ)
+- **計画の正は Claude の Artifact**:
+  https://claude.ai/code/artifact/a650768b-6e46-4ba6-a022-0a3ab186990d
+  (所有者のみ閲覧可)。計画を直すときは Artifact 側を更新してから
+  `docs/plan.html` へコピーし直す。新しい Artifact を作るとリンクが分裂する
 - git identity — グローバル設定が無い環境なので、新しい PC では設定が必要:
 
 ```bash
