@@ -332,7 +332,7 @@ fn gui_extension_supports_embedded_native_windows_only() {
     let ext = handle
         .get_extension::<PluginGui>()
         .expect("gui 拡張があること");
-    let mut mt = rig.instance.plugin_handle();
+    let mt = rig.instance.plugin_handle();
 
     let native = if cfg!(target_os = "windows") {
         GuiApiType::WIN32
@@ -344,22 +344,21 @@ fn gui_extension_supports_embedded_native_windows_only() {
 
     // 埋め込みのみ対応。フローティングは拒否する。
     assert!(ext.is_api_supported(
-        &mut mt,
+        &mt,
         GuiConfiguration {
             api_type: native,
             is_floating: false
         }
     ));
     assert!(!ext.is_api_supported(
-        &mut mt,
+        &mt,
         GuiConfiguration {
             api_type: native,
             is_floating: true
         }
     ));
 
-    // 既定サイズは 960x640 (デザインの固定サイズ)。
-    let preferred = ext.get_preferred_api(&mut mt).expect("推奨 API があること");
+    let preferred = ext.get_preferred_api(&mt).expect("推奨 API があること");
     assert!(!preferred.is_floating);
 }
 
