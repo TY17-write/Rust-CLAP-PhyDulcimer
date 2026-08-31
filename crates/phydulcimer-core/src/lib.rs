@@ -25,6 +25,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod course;
 pub mod hammer;
 pub mod instrument;
 pub mod layout;

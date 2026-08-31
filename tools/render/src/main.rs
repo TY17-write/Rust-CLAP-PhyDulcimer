@@ -25,8 +25,15 @@ USAGE:
 MODES:
     (default)              decaying sine, for checking the analysis path
     --string               render one string segment (Phase 1)
+    --instrument           render the whole instrument (Phase 4)
     --contact-table        print hammer contact times; writes no audio
     --table                print the 15/14 design table (44 positions); no audio
+
+INSTRUMENT (--instrument):
+    --key <MIDI>           strike this key at t=0 (repeatable)
+    --vel <0..1>           note velocity (NOT m/s in this mode)   [default: 0.8]
+    --strike <0..0.5>      strike point x/L                       [default: 0.09]
+    --no-coupling          disconnect the treble bridge coupling (A/B)
 
 COMMON:
     --out <PATH>           write the WAV here      [required except --contact-table]
@@ -69,6 +76,8 @@ enum Mode {
     ContactTable,
     /// 44 発音位置の設計表を出す。音は出ない。
     DesignTable,
+    /// 楽器全体 (全弦常時走行) を鳴らす。
+    Instrument,
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +107,10 @@ struct Args {
     stiffness: Option<f64>,
     t60_low: f64,
     t60_high: f64,
+
+    // 楽器全体
+    keys: Vec<u8>,
+    no_coupling: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -144,6 +157,9 @@ impl Default for Args {
             stiffness: None,
             t60_low: 10.0,
             t60_high: 0.8,
+
+            keys: Vec::new(),
+            no_coupling: false,
         }
     }
 }
@@ -176,6 +192,7 @@ fn run() -> Result<(), String> {
     let (buf, note) = match args.mode {
         Mode::Sine => (render_sine(&args)?, String::new()),
         Mode::String => render_string(&args)?,
+        Mode::Instrument => render_instrument(&args)?,
         Mode::ContactTable | Mode::DesignTable => unreachable!(),
     };
 
@@ -298,6 +315,45 @@ fn render_string(args: &Args) -> Result<(Vec<Sample>, String), String> {
         1.0 / seg.strike_ratio(),
     );
 
+    Ok((buf, note))
+}
+
+/// 楽器全体を鳴らす (Phase 4)。出力はブリッジ力の和 (モノ、校正前)。
+fn render_instrument(args: &Args) -> Result<(Vec<Sample>, String), String> {
+    use phydulcimer_core::instrument::Instrument;
+
+    if args.dur <= 0.0 {
+        return Err(format!("--dur は正の値が必要です: {}", args.dur));
+    }
+    if args.keys.is_empty() {
+        return Err("--instrument には --key <MIDI> が最低 1 つ必要です".into());
+    }
+
+    let mut inst = Instrument::new(args.sample_rate);
+    inst.set_strike_ratio(args.strike);
+    if args.no_coupling {
+        inst.set_bridge_coupling(0.0);
+    }
+
+    // --instrument の --vel は MIDI 的な 0–1 (--string の m/s とは違う)。
+    let velocity = args.vel.clamp(0.0, 1.0);
+    for &key in &args.keys {
+        inst.note_on(key, velocity);
+    }
+
+    let n = (args.dur * args.sample_rate).round() as usize;
+    let mut buf = vec![0.0 as Sample; n];
+    for chunk in buf.chunks_mut(64) {
+        inst.process(chunk);
+    }
+
+    let note = format!(
+        "instrument  keys {:?}, vel {:.2}, strike {:.3}, coupling {}",
+        args.keys,
+        velocity,
+        args.strike,
+        if args.no_coupling { "OFF" } else { "on" },
+    );
     Ok((buf, note))
 }
 
@@ -486,6 +542,13 @@ fn parse_args(argv: Vec<String>) -> Result<Option<Args>, String> {
             "--string" => args.mode = Mode::String,
             "--contact-table" => args.mode = Mode::ContactTable,
             "--table" => args.mode = Mode::DesignTable,
+            "--instrument" => args.mode = Mode::Instrument,
+            "--key" => args.keys.push(
+                parse_usize(&value()?, "--key")?
+                    .try_into()
+                    .map_err(|_| "--key は 0–127 です".to_string())?,
+            ),
+            "--no-coupling" => args.no_coupling = true,
 
             "--out" => args.out = PathBuf::from(value()?),
             "--dur" => args.dur = parse_f64(&value()?, "--dur")?,

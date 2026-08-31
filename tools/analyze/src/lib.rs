@@ -457,6 +457,82 @@ pub fn estimate_inharmonicity(partials: &[FoundPartial]) -> Option<f64> {
     Some(estimates[estimates.len() / 2])
 }
 
+/// 帯域包絡の変調 (うなり) の推定結果。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ModulationEstimate {
+    /// 指数減衰を除いた後の包絡の起伏 [dB] (最大 − 最小)
+    pub depth_db: f64,
+    /// 使った包絡の点数
+    pub points: usize,
+}
+
+/// 部分音の包絡の変調深さ (うなり) を測る。
+///
+/// # なぜこれが要るか (PhyPiano Phase 10.3 の教訓)
+///
+/// うなり (ユニゾン弦のデチューン) は**部分音のピーク位置では測れない**。
+/// 1 本のピークが 2 本に割れると片方しか拾わず、暗くなったように誤って見える。
+/// うなりが現れるのは**時間方向の包絡の変調**だけ。
+///
+/// 窓ごとに Goertzel で振幅を測り、dB にして指数減衰 (直線) を最小二乗で除き、
+/// 残差の起伏 (最大 − 最小) を返す。うなりが無ければ残差はほぼ平坦。
+///
+/// `skip_sec` は打撃の過渡を捨てる長さ。過渡はチャタリングで包絡が暴れるので、
+/// 0.5 秒以上を推奨。
+pub fn modulation_depth(
+    samples: &[f32],
+    sample_rate: f64,
+    freq_hz: f64,
+    window_sec: f64,
+    hop_sec: f64,
+    skip_sec: f64,
+) -> Option<ModulationEstimate> {
+    let window = (sample_rate * window_sec) as usize;
+    let hop = (sample_rate * hop_sec) as usize;
+    let skip = (sample_rate * skip_sec) as usize;
+    if window < 16 || hop == 0 || samples.len() < skip + window * 3 {
+        return None;
+    }
+
+    let mut db = Vec::new();
+    let mut start = skip;
+    while start + window <= samples.len() {
+        let mag = goertzel_magnitude(&samples[start..start + window], sample_rate, freq_hz);
+        if mag <= 0.0 {
+            return None;
+        }
+        db.push(20.0 * mag.log10());
+        start += hop;
+    }
+    if db.len() < 6 {
+        return None;
+    }
+
+    // dB 直線 (指数減衰) を除く。
+    let n = db.len() as f64;
+    let mean_x = (n - 1.0) / 2.0;
+    let mean_y = db.iter().sum::<f64>() / n;
+    let sxx: f64 = (0..db.len()).map(|i| (i as f64 - mean_x).powi(2)).sum();
+    let sxy: f64 = db
+        .iter()
+        .enumerate()
+        .map(|(i, &y)| (i as f64 - mean_x) * (y - mean_y))
+        .sum();
+    let slope = sxy / sxx;
+
+    let (mut lo, mut hi) = (f64::MAX, f64::MIN);
+    for (i, &y) in db.iter().enumerate() {
+        let r = y - (mean_y + slope * (i as f64 - mean_x));
+        lo = lo.min(r);
+        hi = hi.max(r);
+    }
+
+    Some(ModulationEstimate {
+        depth_db: hi - lo,
+        points: db.len(),
+    })
+}
+
 /// 2 つの窓の振幅比から T60 [s] を求める。
 ///
 /// 単一の指数減衰を仮定した粗い推定。ダブルデケイがあると意味を失うが、
@@ -842,6 +918,41 @@ mod tests {
                 .unwrap_or_else(|| panic!("T60 {t60} s が狭い窓でも測れない"));
             assert_relative_eq!(est.t60_sec, t60, max_relative = 0.1);
         }
+    }
+
+    #[test]
+    fn modulation_depth_detects_beating_and_ignores_plain_decay() {
+        // 2 本のデチューンした正弦波の和はうなり、1 本は平坦。
+        let n = (SR * 4.0) as usize;
+        let decay = (-3.0 * std::f64::consts::LN_10 / (8.0 * SR)).exp();
+
+        let make = |detune_hz: f64| -> Vec<f32> {
+            let mut amp = 1.0f64;
+            (0..n)
+                .map(|i| {
+                    let t = i as f64 / SR;
+                    let s = amp
+                        * ((std::f64::consts::TAU * 440.0 * t).sin()
+                            + (std::f64::consts::TAU * (440.0 + detune_hz) * t).sin());
+                    amp *= decay;
+                    (0.5 * s) as f32
+                })
+                .collect()
+        };
+
+        let beating = modulation_depth(&make(0.5), SR, 440.0, 0.25, 0.1, 0.2).unwrap();
+        let plain = modulation_depth(&make(0.0), SR, 440.0, 0.25, 0.1, 0.2).unwrap();
+
+        assert!(
+            beating.depth_db > 6.0,
+            "うなりが検出されない: {:.2} dB",
+            beating.depth_db
+        );
+        assert!(
+            plain.depth_db < 1.0,
+            "うなりの無い信号で誤検出: {:.2} dB",
+            plain.depth_db
+        );
     }
 
     #[test]

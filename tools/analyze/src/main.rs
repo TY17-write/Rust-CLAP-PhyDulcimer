@@ -13,7 +13,7 @@ use std::process::ExitCode;
 
 use phydulcimer_analyze::{
     estimate_fundamental, estimate_inharmonicity, estimate_partial_t60_with, estimate_t60,
-    find_partial, goertzel_magnitude, read_wav, to_db, Wav,
+    find_partial, goertzel_magnitude, modulation_depth, read_wav, to_db, Wav,
 };
 
 const USAGE: &str = "\
@@ -37,6 +37,9 @@ OPTIONS:
     --partial-t60          T60 of each partial (needs --partials)
     --t60-window <SEC>     analysis window for --partial-t60       [default: 0.2]
     --t60-hop <SEC>        hop for --partial-t60; use <= T60/12    [default: 0.05]
+    --modulation           beating depth per partial (needs --partials).
+                           envelope ripple in dB after removing the decay;
+                           beating shows up HERE, not in partial peak levels
 
     -h, --help             show this help
 
@@ -64,6 +67,7 @@ struct Args {
     partial_t60: bool,
     t60_window: f64,
     t60_hop: f64,
+    modulation: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,6 +92,7 @@ impl Default for Args {
             partial_t60: false,
             t60_window: 0.2,
             t60_hop: 0.05,
+            modulation: false,
         }
     }
 }
@@ -180,6 +185,8 @@ fn print_partials(args: &Args, samples: &[f32], sr: f64, f0: f64) {
     );
     if args.partial_t60 {
         println!("   n        freq     cent        dB       T60      R^2");
+    } else if args.modulation {
+        println!("   n        freq     cent        dB     modulation");
     } else {
         println!("   n        freq     cent        dB");
     }
@@ -200,6 +207,17 @@ fn print_partials(args: &Args, samples: &[f32], sr: f64, f0: f64) {
                 None => println!(
                     "{:>4}  {:>10.2}  {:>+7.1}  {:>8.2}  {:>8}  {:>7}",
                     p.n, p.freq_hz, p.cents, db, "—", "—"
+                ),
+            }
+        } else if args.modulation {
+            match modulation_depth(samples, sr, p.freq_hz, 0.25, 0.1, 0.5) {
+                Some(m) => println!(
+                    "{:>4}  {:>10.2}  {:>+7.1}  {:>8.2}  {:>9.2} dB ripple ({} pts)",
+                    p.n, p.freq_hz, p.cents, db, m.depth_db, m.points
+                ),
+                None => println!(
+                    "{:>4}  {:>10.2}  {:>+7.1}  {:>8.2}  {:>9}",
+                    p.n, p.freq_hz, p.cents, db, "—"
                 ),
             }
         } else {
@@ -276,6 +294,7 @@ fn parse_args(argv: Vec<String>) -> Result<Option<Args>, String> {
             "--partial-t60" => args.partial_t60 = true,
             "--t60-window" => args.t60_window = parse_f64(&value()?, "--t60-window")?,
             "--t60-hop" => args.t60_hop = parse_f64(&value()?, "--t60-hop")?,
+            "--modulation" => args.modulation = true,
             other => return Err(format!("不明な引数: {other}")),
         }
     }
@@ -285,6 +304,9 @@ fn parse_args(argv: Vec<String>) -> Result<Option<Args>, String> {
     }
     if args.partial_t60 && args.partials.is_none() {
         return Err("--partial-t60 は --partials と併せて使います".into());
+    }
+    if args.modulation && args.partials.is_none() {
+        return Err("--modulation は --partials と併せて使います".into());
     }
     Ok(Some(args))
 }

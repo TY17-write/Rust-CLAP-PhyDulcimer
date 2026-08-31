@@ -47,6 +47,11 @@ pub const STEEL_DENSITY: f64 = 7_850.0;
 /// 鋼のヤング率 [Pa]。
 pub const STEEL_YOUNG: f64 = 2.0e11;
 
+/// ブリッジ結合を受けるモード重みの肩 [Hz] (2 次ロールオフ)。
+///
+/// 詳細は `rebuild` 内のコメントと `course` モジュール。
+pub const BRIDGE_TAPER_HZ: f64 = 1_200.0;
+
 /// 1 区間の弦の設計値。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SegmentParams {
@@ -241,6 +246,10 @@ pub struct Segment {
     modes: usize,
     /// 前サブサンプルの打弦点変位 [m]。速度を差分で作るために持つ
     prev_displacement: f64,
+    /// 直近サンプルの撥の接触力 [N] (サブサンプル平均)。接触していなければ 0。
+    ///
+    /// ブリッジ結合 (course) が反対区間への透過に使う。
+    last_hammer_force: Sample,
 }
 
 impl Segment {
@@ -271,6 +280,7 @@ impl Segment {
             mode_limit: 0,
             modes: 0,
             prev_displacement: 0.0,
+            last_hammer_force: 0.0,
         };
         s.rebuild();
         s
@@ -355,8 +365,18 @@ impl Segment {
     /// 鳴っている弦を叩いたとき出発の瞬間に非物理的な圧縮スパイクが出て、
     /// ループ再生の再打弦で発散する (D-016)。
     pub fn strike(&mut self, velocity_mps: f64) {
+        self.strike_delayed(velocity_mps, 0.0);
+    }
+
+    /// `delay_sec` 遅れて当たる打弦。
+    ///
+    /// 撥を弦の手前 `v·Δt` から出発させることで遅延を作る。コースの 2 本目の
+    /// 弦は 1 本目と完全同時には叩かれない (0–0.3 ms のばらつき) ので、
+    /// それをここで表す。
+    pub fn strike_delayed(&mut self, velocity_mps: f64, delay_sec: f64) {
         let displacement = self.bank.displacement_at_strike() as f64;
-        self.hammer.strike_at(velocity_mps, displacement);
+        let start = displacement - velocity_mps.max(0.0) * delay_sec.max(0.0);
+        self.hammer.strike_at(velocity_mps, start);
         self.prev_displacement = displacement;
     }
 
@@ -365,6 +385,7 @@ impl Segment {
         self.bank.reset();
         self.hammer.reset();
         self.prev_displacement = 0.0;
+        self.last_hammer_force = 0.0;
     }
 
     /// 1 サンプル進めて、ブリッジに加わる力 [N] を返す。
@@ -373,13 +394,26 @@ impl Segment {
     /// 1 ms 未満なので、全体のコストにはほぼ効かない。
     #[inline]
     pub fn process_sample(&mut self) -> Sample {
+        self.process_sample_coupled(0.0)
+    }
+
+    /// [`Self::process_sample`] に加えて、ブリッジ駆動を受け取る (Phase 4)。
+    ///
+    /// `bridge_drive` は [`ModalBank::process_sample_bridged`] へそのまま渡す。
+    /// 結合の符号と強さは呼び出し側 ([`course`](crate::course)) が決める。
+    #[inline]
+    pub fn process_sample_coupled(&mut self, bridge_drive: Sample) -> Sample {
         if !self.hammer.is_active() {
-            return self.bank.process_sample(0.0, Rate::Base);
+            self.last_hammer_force = 0.0;
+            return self
+                .bank
+                .process_sample_bridged(0.0, bridge_drive, Rate::Base);
         }
 
         let dt_os = 1.0 / (self.sample_rate * self.oversample as f64);
         let mut last = 0.0 as Sample;
         let mut acc = 0.0 as Sample;
+        let mut force_acc = 0.0f64;
 
         for _ in 0..self.oversample {
             let displacement = self.bank.displacement_at_strike() as f64;
@@ -389,14 +423,27 @@ impl Segment {
             self.prev_displacement = displacement;
 
             let force = self.hammer.step(displacement, velocity, dt_os);
-            last = self.bank.process_sample(force as Sample, Rate::Oversampled);
+            force_acc += force;
+            // ブリッジ駆動も接触中はオーバーサンプルレートで受ける
+            // (bridge_gain は dt_os で作ってあるのでスケールは合う)。
+            last =
+                self.bank
+                    .process_sample_bridged(force as Sample, bridge_drive, Rate::Oversampled);
             acc += last;
         }
+
+        self.last_hammer_force = (force_acc / self.oversample as f64) as Sample;
 
         match self.decimation {
             Decimation::Drop => last,
             Decimation::Average => acc / self.oversample as Sample,
         }
+    }
+
+    /// 直近サンプルの撥の接触力 [N] (サブサンプル平均)。接触が無ければ 0。
+    #[inline]
+    pub fn last_hammer_force(&self) -> Sample {
+        self.last_hammer_force
     }
 
     /// ブロックを埋める (加算ではなく上書き)。
@@ -464,12 +511,22 @@ impl Segment {
             // ブリッジ力 F = T·Σ a_n·(nπ/L)。高次ほど強く駆動する。
             let out_weight = tension * nf * std::f64::consts::PI / length;
 
+            // ブリッジ駆動を受ける重み。素の物理は out_weight と同じだが、
+            // 高域を 2 次で落とす (BRIDGE_TAPER_HZ)。1 サンプル遅延の帰還は
+            // 高周波モードで位相が回りきり、固有減衰 (σ·dt) を超えるループ
+            // ゲインが乗るとゆっくり発散する。実測: 落とさないと k がどれほど
+            // 小さくても数百 ms 〜数秒で発散した。物理的にもブリッジの質量で
+            // 高域の速度応答は落ちる。
+            let taper = 1.0 / (1.0 + (freq / BRIDGE_TAPER_HZ).powi(2));
+            let bridge_weight = out_weight * taper;
+
             let spec = ModeSpec {
                 freq_hz: freq,
                 decay: self.damping.decay_at(freq),
                 strike_weight: shape,
                 modal_mass,
                 out_weight,
+                bridge_weight,
             };
             self.bank.set_mode(i, Rate::Base, dt_base, &spec);
             self.bank.set_mode(i, Rate::Oversampled, dt_os, &spec);
@@ -787,7 +844,8 @@ mod tests {
         assert_eq!(seg.displacement_at_strike(), 0.0);
         let mut buf = vec![0.0 as Sample; 128];
         seg.process_block(&mut buf);
-        assert!(buf.iter().all(|&s| s == 0.0));
+        // デノーマル防止の DC (−300 dB) が乗るので厳密 0 ではなく閾値で見る。
+        assert!(buf.iter().all(|&s| s.abs() < 1e-9));
     }
 
     // ---- モード数と倍率 ----------------------------------------------------

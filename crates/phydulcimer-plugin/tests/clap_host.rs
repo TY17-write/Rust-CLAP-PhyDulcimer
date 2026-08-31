@@ -525,7 +525,8 @@ fn out_of_range_keys_are_silent_and_harmless() {
             push_note_on(ev, 0, 108, 1.0); // C8 — 範囲外
         }
     });
-    assert_eq!(peak(&left), 0.0, "範囲外の鍵で音が出た");
+    // デノーマル防止の DC (−300 dB) が乗るので厳密 0 ではなく閾値で見る。
+    assert!(peak(&left) < 1e-9, "範囲外の鍵で音が出た: {}", peak(&left));
 }
 
 #[test]
@@ -718,10 +719,11 @@ fn ringing_strings_do_not_survive_a_loop_restart() {
     );
 
     // 2 周目: 何も弾かない。前の周回の響きが聴こえたら持ち越されている。
+    // デノーマル防止の DC (−300 dB) が乗るので厳密 0 ではなく閾値で見る。
     let (second, _) = rig.render(40, |_, _| {});
-    assert_eq!(
-        peak(&second),
-        0.0,
-        "前の周回の響きがループを越えて残っている"
+    assert!(
+        peak(&second) < 1e-9,
+        "前の周回の響きがループを越えて残っている: {}",
+        peak(&second)
     );
 }

@@ -89,6 +89,22 @@ pub const MAX_MODES: usize = 256;
 /// SIMD のレーン数。
 pub const LANES: usize = 8;
 
+/// デノーマル防止の微小 DC [N]。入力へ常時足す。
+///
+/// # なぜ要るか (D-019)
+///
+/// この楽器は弦を回収しない (ダンパーが無く、常時走行)。減衰の尻尾は
+/// f32 のデノーマル域 (< 1.2e-38) を**何十秒もかけて通過し続け**、
+/// x86 のデノーマル演算ペナルティで処理が 1 桁遅くなる。PhyPiano (P-004) は
+/// 「ボイス回収が先に効くので到達しない」で FTZ を見送れたが、回収の無い
+/// この楽器では実際に踏んだ (テストスイートが 30 秒 → 10 分超)。
+///
+/// 微小 DC を入力へ足すと、状態は 0 ではなく正規化数の微小定常値
+/// (このゲインで ~1e-16 台) に落ち着き、デノーマルに沈まない。
+/// −300 dB なので聴感・測定への影響は無い。`forbid(unsafe_code)` を保ったまま
+/// FTZ/DAZ と同じ効果が得られる。
+const ANTI_DENORMAL: Sample = 1.0e-15;
+
 /// [`MAX_MODES`] を収めるのに要る [`f32x8`] の本数。
 const CHUNKS: usize = MAX_MODES / LANES;
 
@@ -135,6 +151,13 @@ struct RateCoeffs {
     r_sin: [f32x8; CHUNKS],
     /// 力 [N] → 状態実部への注入ゲイン (`dt/ω_d · φ_n / M_n`)
     in_gain: [f32x8; CHUNKS],
+    /// ブリッジ駆動 → 状態実部への注入ゲイン (`dt/ω_d · w_n / M_n`)
+    ///
+    /// ブリッジ点は弦の端 (変位モードの節) なので、点の力は `φ_n` では
+    /// 入らない。端点が動くときの結合は**モード形状の傾き** `φ'_n(0) ∝ n` で
+    /// 決まり、これは出力重み `w_n = T·nπ/L` と同じ形。つまりブリッジ駆動は
+    /// **出力の転置** (ランク1 の結合、`docs/plan.html` §03)。
+    bridge_gain: [f32x8; CHUNKS],
 }
 
 impl Default for RateCoeffs {
@@ -144,6 +167,7 @@ impl Default for RateCoeffs {
             r_cos: [zero; CHUNKS],
             r_sin: [zero; CHUNKS],
             in_gain: [zero; CHUNKS],
+            bridge_gain: [zero; CHUNKS],
         }
     }
 }
@@ -161,6 +185,13 @@ pub struct ModeSpec {
     pub modal_mass: f64,
     /// 出力の重み (ブリッジ力なら `T·nπ/L`)
     pub out_weight: f64,
+    /// ブリッジ駆動を受ける重み。
+    ///
+    /// 素の物理は `out_weight` と同じ (ランク1 の転置) だが、**高域は
+    /// 落とすこと**。1 サンプル遅延の帰還は高周波モードで位相が回りきり、
+    /// モードの固有減衰 (σ·dt) を超えるループゲインが乗ると発散する。
+    /// 物理的にもブリッジの質量で高域の結合は落ちる。
+    pub bridge_weight: f64,
 }
 
 /// 並列2次共振器バンク。
@@ -272,6 +303,7 @@ impl ModalBank {
                 set_lane(&mut self.coeffs[rate].r_cos[c], l, 0.0);
                 set_lane(&mut self.coeffs[rate].r_sin[c], l, 0.0);
                 set_lane(&mut self.coeffs[rate].in_gain[c], l, 0.0);
+                set_lane(&mut self.coeffs[rate].bridge_gain[c], l, 0.0);
             }
         }
     }
@@ -314,6 +346,14 @@ impl ModalBank {
         };
         set_lane(&mut c.in_gain[chunk], slot, gain as Sample);
 
+        // ブリッジ駆動: 重みは呼び出し側が高域を落とした bridge_weight。
+        let bridge = if spec.modal_mass > 0.0 {
+            dt / omega_d * spec.bridge_weight / spec.modal_mass
+        } else {
+            0.0
+        };
+        set_lane(&mut c.bridge_gain[chunk], slot, bridge as Sample);
+
         set_lane(
             &mut self.strike_weight[chunk],
             slot,
@@ -335,8 +375,26 @@ impl ModalBank {
     /// 別の量が要るなら別ループで回すほうが速い (→ `docs/problems.md` の D-009)。
     #[inline]
     pub fn process_sample(&mut self, force: Sample, rate: Rate) -> Sample {
+        self.process_sample_bridged(force, 0.0, rate)
+    }
+
+    /// [`Self::process_sample`] に加えて、ブリッジ駆動 `bridge_drive` を
+    /// `w_n` の重みで注入する (出力の転置、Phase 4 のブリッジ結合)。
+    ///
+    /// `bridge_drive` はブリッジ点の動きに相当する量。結合の強さと符号は
+    /// 呼び出し側 ([`course`](crate::course)) が決める。
+    #[inline]
+    pub fn process_sample_bridged(
+        &mut self,
+        force: Sample,
+        bridge_drive: Sample,
+        rate: Rate,
+    ) -> Sample {
         let c = &self.coeffs[rate as usize];
-        let drive = f32x8::splat(force);
+        // デノーマル防止の DC を両方の入力路へ (上記 ANTI_DENORMAL 参照)。
+        // strike_weight が節で 0 のモードにも bridge_weight 側から届く。
+        let drive = f32x8::splat(force + ANTI_DENORMAL);
+        let bridge = f32x8::splat(bridge_drive + ANTI_DENORMAL);
         let mut out = f32x8::splat(0.0);
 
         for i in 0..self.chunks {
@@ -344,7 +402,9 @@ impl ModalBank {
             let im = self.im[i];
             let damp = self.damping[i];
             // 回転させてから追加減衰を掛ける。極半径を r·damp にするのと等価。
-            let next_re = (c.r_cos[i] * re - c.r_sin[i] * im) * damp + c.in_gain[i] * drive;
+            let next_re = (c.r_cos[i] * re - c.r_sin[i] * im) * damp
+                + c.in_gain[i] * drive
+                + c.bridge_gain[i] * bridge;
             let next_im = (c.r_sin[i] * re + c.r_cos[i] * im) * damp;
             self.re[i] = next_re;
             self.im[i] = next_im;
@@ -428,6 +488,7 @@ mod tests {
                 strike_weight: 1.0,
                 modal_mass: 1.0,
                 out_weight: 1.0,
+                bridge_weight: 0.0,
             },
         );
         bank
@@ -557,6 +618,7 @@ mod tests {
                 strike_weight: 1.0,
                 modal_mass: 1.0,
                 out_weight: 1.0,
+                bridge_weight: 0.0,
             },
         );
 
@@ -607,6 +669,7 @@ mod tests {
                 strike_weight: 1.0,
                 modal_mass: 1.0,
                 out_weight: 1.0,
+                bridge_weight: 0.0,
             },
         );
         assert_eq!(bank.mode_displacement(MAX_MODES), 0.0);
@@ -635,6 +698,7 @@ mod tests {
                     strike_weight: 1.0,
                     modal_mass: 1.0,
                     out_weight: 1.0,
+                    bridge_weight: 0.0,
                 },
             );
         }
