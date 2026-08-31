@@ -94,6 +94,8 @@ Phase 1 で決めたこと (数値の根拠は [problems.md](problems.md)):
 ## 2. 環境
 
 - ツールチェイン: Rust (`rust-version = "1.85"`, edition 2021) で確認
+- リモート: `https://github.com/TY17-write/Rust-CLAP-PhyDulcimer.git`
+  (ブランチ `main`、upstream 設定済み)
 - **計画の正は Claude の Artifact**:
   https://claude.ai/code/artifact/a650768b-6e46-4ba6-a022-0a3ab186990d
   (所有者のみ閲覧可)。計画を直すときは Artifact 側を更新してから
