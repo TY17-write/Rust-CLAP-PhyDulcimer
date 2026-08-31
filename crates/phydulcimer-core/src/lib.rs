@@ -7,15 +7,24 @@
 //! - ファイル I/O をしない
 //! - オーディオ経路で panic しうる操作 (添字外アクセス、`unwrap`) をしない
 //!
-//! 段階的に構築中。現在は **Phase 0 — 土台**。モデル本体はまだ無く、
-//! `tools/render` → WAV → `tools/analyze` の経路を検証するための
-//! [`smoke`] だけが入っている。
+//! 段階的に構築中。現在は **Phase 1 — 1 区間の弦と硬い撥**。
+//!
+//! - [`modal`] — 並列2次共振器バンク (弦のモード)
+//! - [`hammer`] — 非線形の撥 (Hunt-Crossley)
+//! - [`segment`] — 弦の 1 区間。設計則・打弦点・ブリッジ力
+//! - [`smoke`] — 疎通確認用の減衰正弦波 (Phase 0)
+//!
+//! まだ無いもの: ブリッジ結合 (Phase 4)、楽器全体 (Phase 3)、響板と箱 (Phase 5)、
+//! X-Y の部屋 (Phase 6)。
 //!
 //! この音源がピアノと構造的に違う点 (ダンパーが無い / ブリッジが弦を 2 つに分ける /
 //! 打弦点が可変 / X-Y の部屋を内蔵する) は `docs/plan.html` を参照。
 
 #![forbid(unsafe_code)]
 
+pub mod hammer;
+pub mod modal;
+pub mod segment;
 pub mod smoke;
 
 /// オーディオ処理で使う標本の型。

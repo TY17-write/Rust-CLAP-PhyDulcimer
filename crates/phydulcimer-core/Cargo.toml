@@ -7,6 +7,9 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+# モーダル共振器を f32x8 で回す。stable Rust のまま SIMD が使える。
+# ビルドは baseline (SSE2) のままなので、AVX が無い環境でも動く。
+wide.workspace = true
 
 [dev-dependencies]
 approx.workspace = true

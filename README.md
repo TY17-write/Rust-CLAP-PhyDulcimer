@@ -31,12 +31,12 @@ Rust で書くハンマーダルシマー物理モデリング音源 (CLAP プ�
 
 ## 現在の状態
 
-**Phase 0 (土台) 完了。** モデル本体はまだ無く、**測定器が信用できる状態**まで作った。
+**Phase 1 (1 区間の弦 + 硬い撥) 完了。**
 
 | Phase | 内容 | 状態 |
 |---|---|---|
 | 0 | ワークスペース骨組み / ドキュメント / オフラインレンダラ・解析ツール | ✅ 完了 |
-| 1 | 1 区間の弦 + 硬いハンマー | 未着手 |
+| 1 | 1 区間の弦 + 硬い撥 | ✅ 完了 |
 | 2 | CLAP 化 (clack) — 弾ける状態にする | 未着手 |
 | 3 | 楽器全体 (配置表・全弦常時・ロール) | 未着手 |
 | 4 | ブリッジ結合 (この音源の中身) | 未着手 |
@@ -47,7 +47,7 @@ Rust で書くハンマーダルシマー物理モデリング音源 (CLAP プ�
 | 9 | GUI とプリセット | 未着手 |
 | 10 | 音色の追い込み | 未着手 |
 
-テスト 52 件、`cargo clippy` / `cargo fmt` ともにクリーン。
+テスト 98 件、`cargo clippy` / `cargo fmt` ともにクリーン。
 
 **計画の正は Artifact**: https://claude.ai/code/artifact/a650768b-6e46-4ba6-a022-0a3ab186990d
 ([`docs/plan.html`](docs/plan.html) はそのコピー)
@@ -59,21 +59,27 @@ cargo build --release --workspace
 cargo test --workspace
 ```
 
-## 使い方 (Phase 0)
+## 使い方 (Phase 1)
 
-現時点で鳴るのは疎通確認用の減衰正弦波だけ。`render` が書いた WAV を `analyze` が
-**設計値どおりに読み取れるか**を確かめるためのもの。
+弦の 1 区間 (トレブル最低コース、D4) を木・レザー・フェルトの撥で叩ける。
 
 ```bash
-# 単一の減衰正弦波
+# 弦を鳴らす (木の撥、ブリッジ寄り x/L=0.09)
+cargo run --release -p phydulcimer-render -- --string --out out/d4.wav --dur 3.0 --peak 0.9
+
+# 打弦点と撥の面を変える (この楽器の主要な音色操作)
+cargo run --release -p phydulcimer-render -- --string --out out/soft.wav \
+    --strike 0.20 --face felt --vel 1.0 --dur 3.0 --peak 0.9
+
+# 部分音・T60・インハーモニシティを測る
+cargo run --release -p phydulcimer-analyze -- --in out/d4.wav --partials 293.66 --count 12 --partial-t60
+
+# 撥の接触時間の表 (剛体壁、音は出ない)
+cargo run --release -p phydulcimer-render -- --contact-table --os 64
+
+# 疎通確認用の減衰正弦波 (Phase 0 の経路検証)
 cargo run --release -p phydulcimer-render -- --out out/smoke.wav --freq 440 --t60 2.0 --dur 3.0
 cargo run --release -p phydulcimer-analyze -- --in out/smoke.wav --f0 --t60
-
-# 部分音列 (インハーモニシティと減衰の傾きつき)
-cargo run --release -p phydulcimer-render -- --out out/tone.wav \
-    --freq 220 --partials 8 --t60 3.0 --t60-taper 1.0 --inharmonicity 4e-4 --dur 4.0
-cargo run --release -p phydulcimer-analyze -- --in out/tone.wav \
-    --partials 220 --count 8 --partial-t60 --window 2.0
 ```
 
 `-h` で全オプションが出る。
@@ -81,16 +87,18 @@ cargo run --release -p phydulcimer-analyze -- --in out/tone.wav \
 **`--peak` の既定は 0 (正規化しない)。** A/B 比較でレベルが揃って差が消える事故を
 防ぐため、PhyPiano から意図的に変えている。聴くときだけ `--peak 0.9` を付ける。
 
-### Phase 0 の実測値
+### Phase 1 の実測値 (アナライザ経由の完了条件)
 
 | 項目 | 設計値 | 実測 |
 |---|---|---|
-| f0 推定 (自己相関) | 440 Hz | **440.00 Hz** |
-| 信号全体の T60 | 2.0 s | **2.000 s** (R² = 0.9999) |
-| 部分音 T60 (n = 1 / 2 / 4) | 3.0 / 1.5 / 0.75 s | **3.000 / 1.500 / 0.750 s** |
-| 部分音位置 (n = 8, B = 4e-4) | +21.9 cent | **+22.2 cent** |
-| インハーモニシティ B の推定 | 4.0e-4 | **3.878e-4** |
-| WAV 往復 (32-bit float) | — | **標本が完全一致** |
+| インハーモニシティ B (treble-long) | 1.897e-4 | **1.925e-4** (誤差 1.5%) |
+| 部分音 T60 (n = 1 / 4 / 8) | 2.00 / 1.73 / 1.20 s | **2.001 / 1.730 / 1.203 s** (R² = 1.0000) |
+| 打弦点 1/8 のノッチ (第 8 部分音) | — | **約 −90 dB** |
+| 壁での接触時間 (木, v=0.5→6 m/s) | 0.1–1.0 ms・単調減少 | **0.28 → 0.17 ms** |
+| オーバーサンプル 16x の収束 (対 64x) | — | 木 **≤1.5 dB** / フェルト **≤0.5 dB** |
+| エイリアスフロア (デシメーションフィルタ無し) | — | **−129 dB 以下** (フィルタ不要と判定) |
+
+全実測値と Phase 0 のぶんは [`docs/context.md`](docs/context.md) §4。
 
 ## ドキュメント
 
@@ -109,6 +117,9 @@ cargo run --release -p phydulcimer-analyze -- --in out/tone.wav \
 - `--partial-t60` は T60 が 0.4 秒を切ると測れない ([D-001](docs/problems.md))
 - 部分音が混在すると、上記の下限より長い T60 でも落ちることがある。原因未特定
   ([D-002](docs/problems.md))
+- 撥の剛性は物理定数ではなく、接触時間からの校正値 ([D-011](docs/problems.md))
+- 木の撥はチャタリングし、「接触時間の合計」は収束した観測量ではない
+  ([D-012](docs/problems.md))
 - 響板は板のシミュレーションではなくフィルタ近似 (Phase 5 で実装予定)
 
 ## 参照元
