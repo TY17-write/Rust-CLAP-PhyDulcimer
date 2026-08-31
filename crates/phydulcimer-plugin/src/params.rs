@@ -22,6 +22,8 @@ pub mod id {
     pub const ABSORPTION: u32 = 7;
     pub const HAMMER_FACE: u32 = 8;
     pub const MUTE: u32 = 9;
+    pub const TEMPERAMENT: u32 = 10;
+    pub const LAYOUT: u32 = 11;
 }
 
 /// 1つのパラメータの仕様。
@@ -132,6 +134,28 @@ pub const PARAMS: &[ParamSpec] = &[
         unit: "",
         decimals: 2,
     },
+    ParamSpec {
+        id: id::TEMPERAMENT,
+        // 0 = Pure Fifth (2:3 ブリッジ、左が +2 cent)、1 = Equal (平均律の5度)。
+        // ブリッジ位置 = 弦の設計が変わるので **activate 時に適用** (Phase 7)。
+        name: b"Temperament",
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+        unit: "",
+        decimals: 0,
+    },
+    ParamSpec {
+        id: id::LAYOUT,
+        // 0 = Diatonic 15/14 (G2-D6, 27 音)、1 = Chromatic E3-E6 (37 音)。
+        // 弦バンクの再構築を伴うので **activate 時に適用** (Phase 7)。
+        name: b"Layout",
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+        unit: "",
+        decimals: 0,
+    },
 ];
 
 /// `id` に対応する仕様を返す。
@@ -171,6 +195,8 @@ pub struct ParamValues {
     pub absorption: AtomicF32,
     pub hammer_face: AtomicF32,
     pub mute: AtomicF32,
+    pub temperament: AtomicF32,
+    pub layout: AtomicF32,
 }
 
 impl Default for ParamValues {
@@ -192,6 +218,8 @@ impl ParamValues {
             absorption: AtomicF32::new(default_of(id::ABSORPTION)),
             hammer_face: AtomicF32::new(default_of(id::HAMMER_FACE)),
             mute: AtomicF32::new(default_of(id::MUTE)),
+            temperament: AtomicF32::new(default_of(id::TEMPERAMENT)),
+            layout: AtomicF32::new(default_of(id::LAYOUT)),
         }
     }
 
@@ -209,6 +237,8 @@ impl ParamValues {
             id::ABSORPTION => self.absorption.store(v),
             id::HAMMER_FACE => self.hammer_face.store(v),
             id::MUTE => self.mute.store(v),
+            id::TEMPERAMENT => self.temperament.store(v),
+            id::LAYOUT => self.layout.store(v),
             _ => {}
         }
     }
@@ -225,6 +255,8 @@ impl ParamValues {
             id::ABSORPTION => self.absorption.load() as f64,
             id::HAMMER_FACE => self.hammer_face.load() as f64,
             id::MUTE => self.mute.load() as f64,
+            id::TEMPERAMENT => self.temperament.load() as f64,
+            id::LAYOUT => self.layout.load() as f64,
             _ => return None,
         })
     }

@@ -42,7 +42,10 @@ use std::ops::Bound;
 use params::ParamValues;
 use phydulcimer_core::engine::DulcimerEngine;
 use phydulcimer_core::hammer::HammerFace;
+use phydulcimer_core::instrument::InstrumentConfig;
+use phydulcimer_core::layout::LayoutKind;
 use phydulcimer_core::room::{RoomParams, RoomSize};
+use phydulcimer_core::scaling::Temperament;
 
 /// CLAP プラグイン ID (逆ドメイン形式)。公開後は変更しないこと。
 pub const PLUGIN_ID: &str = "jp.ty17.phydulcimer";
@@ -96,6 +99,22 @@ fn face_from_value(value: f32) -> HammerFace {
         1 => HammerFace::Leather,
         2 => HammerFace::Felt,
         _ => HammerFace::Wood,
+    }
+}
+
+/// Layout / Temperament パラメータ → 楽器の構成 (activate 時に適用)。
+fn config_from_params(params: &ParamValues) -> InstrumentConfig {
+    InstrumentConfig {
+        layout: if params.layout.load() >= 0.5 {
+            LayoutKind::ChromaticE3E6
+        } else {
+            LayoutKind::Diatonic1514
+        },
+        temperament: if params.temperament.load() >= 0.5 {
+            Temperament::Equal12
+        } else {
+            Temperament::PureFifth
+        },
     }
 }
 
@@ -167,30 +186,40 @@ impl<'a> PluginMainThread<'a, PhyDulcimerShared> for PhyDulcimerMainThread<'a> {
 pub struct PhyDulcimerAudioProcessor<'a> {
     engine: DulcimerEngine,
     shared: &'a PhyDulcimerShared,
+    /// ホストへの参照 (Layout/Temperament 変更時の `request_restart` 用。
+    /// CLAP 仕様でスレッドセーフ、中身は関数ポインタ呼び出しのみ)
+    host: HostAudioProcessorHandle<'a>,
     /// エンジンのステレオ出力を受けてからポートへ配る (事前確保)
     left: Vec<f32>,
     right: Vec<f32>,
     /// 連続で無音だったブロック数。[`SILENT_BLOCKS_TO_SLEEP`] に達したら眠る
     silent_blocks: u32,
+    /// restart を一度だけ要求するためのラッチ (連打防止)
+    restart_requested: bool,
 }
 
 impl<'a> PluginAudioProcessor<'a, PhyDulcimerShared, PhyDulcimerMainThread<'a>>
     for PhyDulcimerAudioProcessor<'a>
 {
     fn activate(
-        _host: HostAudioProcessorHandle<'a>,
+        host: HostAudioProcessorHandle<'a>,
         _main_thread: &PhyDulcimerMainThread,
         shared: &'a PhyDulcimerShared,
         audio_config: PluginAudioConfiguration,
     ) -> Result<Self, PluginError> {
         // 確保はここだけ。activate はメインスレッドで呼ばれるので許される。
+        // Layout / Temperament は弦バンクの再構築を伴うので**ここで**読む
+        // (Phase 7)。以後の変更は request_restart → 次の activate で反映。
         let max_block = (audio_config.max_frames_count as usize).max(1);
+        let config = config_from_params(&shared.params);
         Ok(Self {
-            engine: DulcimerEngine::new(audio_config.sample_rate, max_block),
+            engine: DulcimerEngine::with_config(audio_config.sample_rate, max_block, config),
             shared,
+            host,
             left: vec![0.0; max_block],
             right: vec![0.0; max_block],
             silent_blocks: 0,
+            restart_requested: false,
         })
     }
 
@@ -341,6 +370,10 @@ impl PhyDulcimerAudioProcessor<'_> {
                     .set_strike_ratio(self.shared.params.strike_position.load() as f64);
                 self.engine
                     .set_hammer_face(face_from_value(self.shared.params.hammer_face.load()));
+                // Layout / Temperament は再構築が要るので、ここでは変更を検出して
+                // ホストへ再 activate を頼むだけ (非対応ホストでは次の activate で
+                // 反映される)。
+                self.request_restart_if_config_changed();
             }
             Some(CoreEventSpace::Midi(event)) => {
                 self.handle_midi(event.data());
@@ -351,6 +384,19 @@ impl PhyDulcimerAudioProcessor<'_> {
 }
 
 impl PhyDulcimerAudioProcessor<'_> {
+    /// Layout / Temperament が今のエンジンと食い違ったら、ホストへ一度だけ
+    /// 再 activate を要求する (`clap_host.request_restart` — CLAP 仕様で
+    /// どのスレッドからでも呼べる。確保なし)。
+    fn request_restart_if_config_changed(&mut self) {
+        if self.restart_requested {
+            return;
+        }
+        if config_from_params(&self.shared.params) != self.engine.config() {
+            self.host.shared().request_restart();
+            self.restart_requested = true;
+        }
+    }
+
     /// 生の MIDI から必要な CC だけ拾う。
     ///
     /// パラメータと同じ `ParamValues` へ書くので、CC とホストのオートメーションは
@@ -513,6 +559,18 @@ impl PluginMainThreadParams for PhyDulcimerMainThread<'_> {
             };
             return write!(writer, "{name}");
         }
+        if id == params::id::TEMPERAMENT {
+            let name = if value >= 0.5 { "Equal" } else { "Pure Fifth" };
+            return write!(writer, "{name}");
+        }
+        if id == params::id::LAYOUT {
+            let name = if value >= 0.5 {
+                "Chromatic E3-E6"
+            } else {
+                "Diatonic 15/14"
+            };
+            return write!(writer, "{name}");
+        }
         write!(writer, "{:.*}{}", spec.decimals, value, spec.unit)
     }
 
@@ -541,6 +599,20 @@ impl PluginMainThreadParams for PhyDulcimerMainThread<'_> {
                 "wood" | "w" | "0" => Some(0.0),
                 "leather" | "l" | "1" => Some(1.0),
                 "felt" | "f" | "2" => Some(2.0),
+                _ => None,
+            };
+        }
+        if id == params::id::TEMPERAMENT {
+            return match text.to_ascii_lowercase().as_str() {
+                "pure fifth" | "pure" | "p" | "0" => Some(0.0),
+                "equal" | "e" | "1" => Some(1.0),
+                _ => None,
+            };
+        }
+        if id == params::id::LAYOUT {
+            return match text.to_ascii_lowercase().as_str() {
+                "diatonic 15/14" | "diatonic" | "d" | "0" => Some(0.0),
+                "chromatic e3-e6" | "chromatic" | "c" | "1" => Some(1.0),
                 _ => None,
             };
         }

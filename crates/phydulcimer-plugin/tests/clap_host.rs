@@ -574,6 +574,53 @@ fn strike_position_parameter_moves_the_notch() {
 }
 
 #[test]
+fn layout_parameter_applies_at_the_next_activate() {
+    // Phase 7: 配置切り替えは弦バンクの再構築を伴うので activate 時に適用。
+    // Rig::render は毎回 activate し直し、Shared (パラメータ) は生き続けるので、
+    // 「render #1 で切り替え → render #2 から効く」を検証できる。
+    let mut rig = Rig::new();
+
+    // render #1: 既定の 15/14。G#4 (68) は無音。パラメータをここで送る。
+    let (l1, _) = rig.render(20, |b, ev| {
+        if b == 0 {
+            push_note_on(ev, 0, 68, 0.9);
+            push_param(ev, plugin_params::id::LAYOUT, 1.0);
+        }
+    });
+    assert!(
+        peak(&l1) < 1e-9,
+        "同じ activate 内で配置が変わってしまった: {:.3e}",
+        peak(&l1)
+    );
+
+    // render #2: 半音階 E3–E6。G#4 も E6 (88) も鳴る。
+    let (l2, _) = rig.render(20, |b, ev| {
+        if b == 0 {
+            push_note_on(ev, 0, 68, 0.9);
+            push_note_on(ev, 0, 88, 0.9);
+        }
+    });
+    assert!(peak(&l2) > 1e-4, "半音階で G#4/E6 が鳴らない");
+
+    // 戻すのも同じ形。render #3 で 15/14 に戻り、G#4 は再び無音。
+    let (_, _) = rig.render(1, |b, ev| {
+        if b == 0 {
+            push_param(ev, plugin_params::id::LAYOUT, 0.0);
+        }
+    });
+    let (l4, _) = rig.render(20, |b, ev| {
+        if b == 0 {
+            push_note_on(ev, 0, 68, 0.9);
+        }
+    });
+    assert!(
+        peak(&l4) < 1e-9,
+        "15/14 に戻したのに G#4 が鳴る: {:.3e}",
+        peak(&l4)
+    );
+}
+
+#[test]
 fn mute_cc_stops_the_ring() {
     // Phase 7: パームミュート。CC1 (モジュレーションホイール) で鳴っている
     // 弦に即座に効く。打鍵後にミュートし、尾部のレベルで比べる。
