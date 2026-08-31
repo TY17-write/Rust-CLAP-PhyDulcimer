@@ -171,6 +171,28 @@ impl EditorHost for PluginEditorHost {
     fn active_temperament(&self) -> u32 {
         self.shared.active_temperament.load(Ordering::Relaxed)
     }
+
+    fn request_reload(&self) {
+        // 前回の Reload で外れた旧エンジンをここ (GUI スレッド) で解放する。
+        if let Ok(mut trash) = self.shared.engine_trash.lock() {
+            trash.take();
+        }
+        let sample_rate = f64::from_bits(self.shared.sample_rate_bits.load(Ordering::Relaxed));
+        let max_block = self.shared.max_block.load(Ordering::Relaxed) as usize;
+        if sample_rate <= 0.0 || max_block == 0 {
+            return; // まだ activate されていない (受け取る側がいない)
+        }
+        // 確保を伴う構築は GUI スレッドで行い、音声スレッドは交換だけ。
+        let config = crate::config_from_params(&self.shared.params);
+        let engine = Box::new(phydulcimer_core::engine::DulcimerEngine::with_config(
+            sample_rate,
+            max_block,
+            config,
+        ));
+        if let Ok(mut slot) = self.shared.engine_swap.lock() {
+            *slot = Some(engine);
+        }
+    }
 }
 
 /// エディタウィンドウの状態。
@@ -228,6 +250,10 @@ impl PluginGuiImpl for PhyDulcimerMainThread<'_> {
             if let Some(handle) = slot.take() {
                 handle.close();
             }
+        }
+        // Reload で外れた旧エンジンが残っていればここ (メインスレッド) で捨てる。
+        if let Ok(mut trash) = self.shared.engine_trash.lock() {
+            trash.take();
         }
     }
 
@@ -367,6 +393,26 @@ mod tests {
         let host = host();
         assert!(host.note_on(60, 0.8));
         assert_eq!(host.shared.notes.pop(), Some((60, 0.8)));
+    }
+
+    #[test]
+    fn reload_builds_an_engine_with_the_current_params() {
+        use phydulcimer_core::layout::LayoutKind;
+        let host = host();
+        // 未 activate (sample_rate = 0) では何も置かない。
+        host.request_reload();
+        assert!(host.shared.engine_swap.lock().unwrap().is_none());
+
+        // activate 相当の実行条件を入れてから Reload。
+        host.shared
+            .sample_rate_bits
+            .store(48_000.0f64.to_bits(), Ordering::Relaxed);
+        host.shared.max_block.store(64, Ordering::Relaxed);
+        host.set_param(id::LAYOUT, 1.0);
+        host.request_reload();
+
+        let engine = host.shared.engine_swap.lock().unwrap().take().unwrap();
+        assert_eq!(engine.config().layout, LayoutKind::ChromaticE3E6);
     }
 
     #[test]

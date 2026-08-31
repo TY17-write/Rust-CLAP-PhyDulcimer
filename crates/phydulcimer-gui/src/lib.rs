@@ -95,4 +95,9 @@ pub trait EditorHost {
     fn active_layout(&self) -> u32;
     /// エンジンに適用済みの音律 (0 = Pure Fifth, 1 = Equal)。
     fn active_temperament(&self) -> u32;
+    /// Layout / Temperament を今すぐ適用する (Reload ボタン)。
+    ///
+    /// ほとんどの DAW は `request_restart` に応じないため、実装側が新しい
+    /// 弦バンクを **GUI スレッドで構築**し、音声スレッドへ差し替えを渡す。
+    fn request_reload(&self);
 }

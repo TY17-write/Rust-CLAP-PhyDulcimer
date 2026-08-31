@@ -161,11 +161,13 @@ impl<H: EditorHost> Editor<H> {
             self.segmented(ui, param_id::TEMPERAMENT, &["Pure Fifth", "Equal"]);
 
             if restart_pending(&self.host) {
-                ui.label(
-                    egui::RichText::new("applies on restart")
-                        .color(theme::RED)
-                        .small(),
-                );
+                ui.label(egui::RichText::new("pending").color(theme::RED).small());
+                if ui
+                    .button(egui::RichText::new("Reload").color(theme::RED))
+                    .clicked()
+                {
+                    self.host.request_reload();
+                }
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -393,6 +395,7 @@ mod tests {
         serials: RefCell<[u32; 128]>,
         active_layout: u32,
         active_temperament: u32,
+        reloads: std::cell::Cell<u32>,
     }
 
     impl FakeHost {
@@ -403,6 +406,7 @@ mod tests {
                 serials: RefCell::new([0; 128]),
                 active_layout: 0,
                 active_temperament: 0,
+                reloads: std::cell::Cell::new(0),
             }
         }
     }
@@ -470,6 +474,9 @@ mod tests {
         }
         fn active_temperament(&self) -> u32 {
             self.active_temperament
+        }
+        fn request_reload(&self) {
+            self.reloads.set(self.reloads.get() + 1);
         }
     }
 

@@ -42,7 +42,7 @@ use std::ffi::CStr;
 use std::fmt::Write as _;
 use std::ops::{Bound, Deref};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use params::ParamValues;
 use phydulcimer_core::engine::DulcimerEngine;
@@ -108,8 +108,8 @@ fn face_from_value(value: f32) -> HammerFace {
     }
 }
 
-/// Layout / Temperament パラメータ → 楽器の構成 (activate 時に適用)。
-fn config_from_params(params: &ParamValues) -> InstrumentConfig {
+/// Layout / Temperament パラメータ → 楽器の構成 (activate / Reload で適用)。
+pub(crate) fn config_from_params(params: &ParamValues) -> InstrumentConfig {
     InstrumentConfig {
         layout: if params.layout.load() >= 0.5 {
             LayoutKind::ChromaticE3E6
@@ -194,6 +194,18 @@ pub struct SharedState {
     /// エディタが開いているか。開いている間は Sleep しない
     /// (眠るとホストが process を止め、鍵盤クリックが排出されない)
     pub(crate) editor_open: AtomicBool,
+    /// activate 時のサンプリング周波数 (f64 のビット)。Reload のエンジン構築用
+    pub(crate) sample_rate_bits: std::sync::atomic::AtomicU64,
+    /// activate 時の最大ブロック長。0 = 未 activate (Reload 不可)
+    pub(crate) max_block: AtomicU32,
+    /// Reload ボタンが構築した新エンジン。音声スレッドが process 先頭で
+    /// **try_lock** して受け取る (待たない)。ロックを取るのは GUI とこの
+    /// try_lock だけ
+    pub(crate) engine_swap: Mutex<Option<Box<DulcimerEngine>>>,
+    /// 差し替えで外した旧エンジン。**音声スレッドでは drop しない** (解放は
+    /// 確保と同じくメイン/GUI スレッドの仕事)。次の Reload かエディタの
+    /// destroy で捨てる
+    pub(crate) engine_trash: Mutex<Option<Box<DulcimerEngine>>>,
 }
 
 impl SharedState {
@@ -211,6 +223,10 @@ impl SharedState {
             active_temperament: AtomicU32::new(temperament),
             gui_edits: AtomicU32::new(0),
             editor_open: AtomicBool::new(false),
+            sample_rate_bits: std::sync::atomic::AtomicU64::new(0),
+            max_block: AtomicU32::new(0),
+            engine_swap: Mutex::new(None),
+            engine_trash: Mutex::new(None),
         }
     }
 
@@ -274,7 +290,8 @@ impl<'a> PluginMainThread<'a, PhyDulcimerShared> for PhyDulcimerMainThread<'a> {
 
 /// オーディオスレッドで動くプロセッサ。
 pub struct PhyDulcimerAudioProcessor<'a> {
-    engine: DulcimerEngine,
+    /// Box なのは Reload (GUI 構築の新エンジン) と確保なしで交換するため
+    engine: Box<DulcimerEngine>,
     shared: &'a PhyDulcimerShared,
     /// ホストへの参照 (Layout/Temperament 変更時の `request_restart` 用。
     /// CLAP 仕様でスレッドセーフ、中身は関数ポインタ呼び出しのみ)
@@ -309,8 +326,17 @@ impl<'a> PluginAudioProcessor<'a, PhyDulcimerShared, PhyDulcimerMainThread<'a>>
         shared
             .active_temperament
             .store(temperament_code(config.temperament), Ordering::Relaxed);
+        // Reload (GUI でのエンジン再構築) に使う実行条件も公開する。
+        shared
+            .sample_rate_bits
+            .store(audio_config.sample_rate.to_bits(), Ordering::Relaxed);
+        shared.max_block.store(max_block as u32, Ordering::Relaxed);
         Ok(Self {
-            engine: DulcimerEngine::with_config(audio_config.sample_rate, max_block, config),
+            engine: Box::new(DulcimerEngine::with_config(
+                audio_config.sample_rate,
+                max_block,
+                config,
+            )),
             shared,
             host,
             left: vec![0.0; max_block],
@@ -326,6 +352,8 @@ impl<'a> PluginAudioProcessor<'a, PhyDulcimerShared, PhyDulcimerMainThread<'a>>
         mut audio: Audio,
         events: Events,
     ) -> Result<ProcessStatus, PluginError> {
+        // Reload ボタンが構築した新エンジンがあれば受け取る (try_lock、待たない)。
+        self.swap_engine_if_ready();
         // GUI 起源の変更をホストへ通知し (これが無いとオートメーションにも
         // Undo にも乗らない)、鍵盤クリックのノートを排出する。
         self.emit_gui_edits(events.output);
@@ -492,6 +520,42 @@ impl PhyDulcimerAudioProcessor<'_> {
 }
 
 impl PhyDulcimerAudioProcessor<'_> {
+    /// Reload (GUI が構築した新エンジン) を受け取って差し替える。
+    ///
+    /// ほとんどの DAW は `request_restart` に応じないので、Layout/Temperament
+    /// の適用はこの経路が本命。**確保も解放もロック待ちもしない**:
+    /// `try_lock` が取れなければ次のブロックへ持ち越し、外した旧エンジンは
+    /// trash に置いて GUI/メインスレッドに drop させる。パラメータ (面・
+    /// ミュート・ROOM 等) は毎バッチの同期が同じブロック内で塗り直す。
+    fn swap_engine_if_ready(&mut self) {
+        let Ok(mut incoming) = self.shared.engine_swap.try_lock() else {
+            return;
+        };
+        let Some(mut fresh) = incoming.take() else {
+            return;
+        };
+        // 旧エンジンの置き場が空いていなければ差し替えごと持ち越す。
+        let Ok(mut trash) = self.shared.engine_trash.try_lock() else {
+            *incoming = Some(fresh);
+            return;
+        };
+        if trash.is_some() {
+            *incoming = Some(fresh);
+            return;
+        }
+        std::mem::swap(&mut self.engine, &mut fresh);
+        *trash = Some(fresh);
+        let config = self.engine.config();
+        self.shared
+            .active_layout
+            .store(layout_code(config.layout), Ordering::Relaxed);
+        self.shared
+            .active_temperament
+            .store(temperament_code(config.temperament), Ordering::Relaxed);
+        // 新しい構成を基準に、次の変更でまた restart を要求できるようにする。
+        self.restart_requested = false;
+    }
+
     /// 実際に鳴らす経路 (MIDI もエディタの鍵盤クリックも共通)。
     ///
     /// **鳴る鍵だけ**打鍵シリアルを進める — GUI の鍵盤はこれを見て光るので、
