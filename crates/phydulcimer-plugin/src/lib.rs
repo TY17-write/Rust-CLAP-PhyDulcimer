@@ -41,6 +41,7 @@ use std::ops::Bound;
 
 use params::ParamValues;
 use phydulcimer_core::engine::DulcimerEngine;
+use phydulcimer_core::room::{RoomParams, RoomSize};
 
 /// CLAP プラグイン ID (逆ドメイン形式)。公開後は変更しないこと。
 pub const PLUGIN_ID: &str = "jp.ty17.phydulcimer";
@@ -202,10 +203,25 @@ impl<'a> PluginAudioProcessor<'a, PhyDulcimerShared, PhyDulcimerMainThread<'a>>
                 self.handle_event(event);
             }
 
-            // ゲインはイベントを処理した後に読む。同じブロックに Level の変更が
-            // 来ていたら、この区間から効かせる。校正はエンジンの中にあるので、
-            // ここは音量つまみ (クリップ後) だけ。
+            // ゲインと ROOM は**イベントを処理した後**に読む (D-015 の教訓 —
+            // ブロック先頭で読むと、同じブロックのパラメータ変更に追い越される)。
+            // set_room_params は値が変わったときだけ再計算するので毎バッチでも安い。
             let gain = self.shared.params.level.load();
+            {
+                let p = &self.shared.params;
+                self.engine.set_room_enabled(p.room.load() >= 0.5);
+                let size = match p.room_size.load().round() as i32 {
+                    0 => RoomSize::Small,
+                    2 => RoomSize::Large,
+                    _ => RoomSize::Medium,
+                };
+                self.engine.set_room_params(RoomParams {
+                    mic_distance_m: p.mic_distance.load() as f64,
+                    xy_angle_deg: p.xy_angle.load() as f64,
+                    size,
+                    absorption: p.absorption.load() as f64,
+                });
+            }
 
             let Some((start, end)) = resolve_bounds(event_batch.sample_bounds(), total_frames)
             else {
@@ -438,13 +454,43 @@ impl PluginMainThreadParams for PhyDulcimerMainThread<'_> {
         value: f64,
         writer: &mut ParamDisplayWriter,
     ) -> std::fmt::Result {
-        let spec = params::spec(u32::from(param_id)).ok_or(std::fmt::Error)?;
+        let id = u32::from(param_id);
+        let spec = params::spec(id).ok_or(std::fmt::Error)?;
+        if id == params::id::ROOM {
+            return write!(writer, "{}", if value >= 0.5 { "On" } else { "Off" });
+        }
+        if id == params::id::ROOM_SIZE {
+            let name = match value.round() as i32 {
+                0 => "Small",
+                2 => "Large",
+                _ => "Medium",
+            };
+            return write!(writer, "{name}");
+        }
         write!(writer, "{:.*}{}", spec.decimals, value, spec.unit)
     }
 
     fn text_to_value(&self, param_id: ClapId, text: &CStr) -> Option<f64> {
-        let spec = params::spec(u32::from(param_id))?;
+        let id = u32::from(param_id);
+        let spec = params::spec(id)?;
         let text = text.to_str().ok()?.trim();
+
+        if id == params::id::ROOM {
+            return match text.to_ascii_lowercase().as_str() {
+                "on" | "1" => Some(1.0),
+                "off" | "0" => Some(0.0),
+                _ => None,
+            };
+        }
+        if id == params::id::ROOM_SIZE {
+            return match text.to_ascii_lowercase().as_str() {
+                "small" | "s" | "0" => Some(0.0),
+                "medium" | "m" | "1" => Some(1.0),
+                "large" | "l" | "2" => Some(2.0),
+                _ => None,
+            };
+        }
+
         let text = spec
             .unit
             .strip_prefix(' ')

@@ -23,6 +23,7 @@
 
 use crate::cabinet::{Cabinet, CabinetParams};
 use crate::instrument::Instrument;
+use crate::room::{Room, RoomParams};
 use crate::soundboard::{Soundboard, SoundboardParams};
 use crate::Sample;
 
@@ -44,12 +45,15 @@ fn soft_clip(x: Sample) -> Sample {
     x.tanh()
 }
 
-/// 楽器 + 響板 + 箱 + 出力段。
+/// 楽器 + 響板 + 箱 + ROOM + 出力段。
 pub struct DulcimerEngine {
     instrument: Instrument,
     sb_bass: Soundboard,
     sb_treble: Soundboard,
     cabinet: Cabinet,
+    room: Room,
+    /// ROOM を通すか。**音質の測定では必ず切ること** (部屋は粗を隠す)
+    room_enabled: bool,
     /// ブリッジごとのバス (事前確保)
     bus_bass: Vec<Sample>,
     bus_treble: Vec<Sample>,
@@ -66,6 +70,8 @@ impl DulcimerEngine {
             sb_bass: Soundboard::new(SoundboardParams::default(), 0xB055, sample_rate),
             sb_treble: Soundboard::new(SoundboardParams::default(), 0x7EB1, sample_rate),
             cabinet: Cabinet::new(CabinetParams::default(), sample_rate),
+            room: Room::new(RoomParams::default(), sample_rate),
+            room_enabled: true,
             bus_bass: vec![0.0; max_block.max(1)],
             bus_treble: vec![0.0; max_block.max(1)],
             raw_output: false,
@@ -101,6 +107,20 @@ impl DulcimerEngine {
         self.raw_output = raw;
     }
 
+    /// ROOM の有効/無効。**音質の測定では切ること** (部屋は粗を隠す)。
+    pub fn set_room_enabled(&mut self, enabled: bool) {
+        self.room_enabled = enabled;
+    }
+
+    /// ROOM のパラメータを差し替える (確保なし。変わったときだけ再計算)。
+    pub fn set_room_params(&mut self, params: RoomParams) {
+        self.room.set_params(params);
+    }
+
+    pub fn room_params(&self) -> &RoomParams {
+        self.room.params()
+    }
+
     pub fn any_hammer_active(&self) -> bool {
         self.instrument.any_hammer_active()
     }
@@ -118,11 +138,14 @@ impl DulcimerEngine {
         self.sb_bass.reset();
         self.sb_treble.reset();
         self.cabinet.reset();
+        self.room.reset();
     }
 
     /// 1 ブロックをステレオへ処理する (上書き)。返り値はブロックのピーク。
     ///
-    /// Phase 5 では L = R。ROOM (Phase 6) がここで L/R を分ける。
+    /// ROOM が有効なら、響板の 2 系統 (+箱を中央として半分ずつ) が
+    /// **別々の方位の音源**として部屋へ入り、L/R が分かれる。
+    /// 無効なら Phase 5 の形 (L = R) のまま。
     pub fn process_stereo(&mut self, left: &mut [Sample], right: &mut [Sample]) -> Sample {
         let len = left.len().min(right.len()).min(self.bus_bass.len());
         let (left, right) = (&mut left[..len], &mut right[..len]);
@@ -135,18 +158,30 @@ impl DulcimerEngine {
             let b = self.bus_bass[i];
             let t = self.bus_treble[i];
 
-            let y = if self.raw_output {
+            let (l, r) = if self.raw_output {
                 // Phase 2 の暫定経路 (ブリッジ力の和)。A/B と旧測定の再現用。
-                soft_clip((b + t) * 0.004)
+                let y = soft_clip((b + t) * 0.004);
+                (y, y)
             } else {
-                let sb = self.sb_bass.process_sample(b) + self.sb_treble.process_sample(t);
+                let sb_b = self.sb_bass.process_sample(b);
+                let sb_t = self.sb_treble.process_sample(t);
                 let cab = self.cabinet.process_sample(b + t);
-                soft_clip((sb + cab) * CALIBRATED_GAIN)
+
+                if self.room_enabled {
+                    // 箱 (音孔) は楽器の中央 = 両系統に半分ずつ。
+                    let src_bass = (sb_b + 0.5 * cab) * CALIBRATED_GAIN;
+                    let src_treble = (sb_t + 0.5 * cab) * CALIBRATED_GAIN;
+                    let (l, r) = self.room.process_sample(src_bass, src_treble);
+                    (soft_clip(l), soft_clip(r))
+                } else {
+                    let y = soft_clip((sb_b + sb_t + cab) * CALIBRATED_GAIN);
+                    (y, y)
+                }
             };
 
-            left[i] = y;
-            right[i] = y;
-            peak = peak.max(y.abs());
+            left[i] = l;
+            right[i] = r;
+            peak = peak.max(l.abs()).max(r.abs());
         }
         peak
     }
@@ -178,11 +213,8 @@ mod tests {
         (l, peak)
     }
 
-    #[test]
-    fn a_note_sounds_and_both_channels_match() {
-        let mut e = DulcimerEngine::new(SR, BLOCK);
-        e.note_on(69, 0.8);
-        let n = (SR * 0.5) as usize;
+    fn render_lr(e: &mut DulcimerEngine, seconds: f64) -> (Vec<Sample>, Vec<Sample>) {
+        let n = (SR * seconds) as usize;
         let mut l = vec![0.0; n];
         let mut r = vec![0.0; n];
         for i in (0..n).step_by(BLOCK) {
@@ -193,8 +225,55 @@ mod tests {
             l[i..end].copy_from_slice(&lb);
             r[i..end].copy_from_slice(&rb);
         }
+        (l, r)
+    }
+
+    #[test]
+    fn with_the_room_the_channels_differ_but_stay_coherent() {
+        // ROOM (既定 ON): 2 系統が別の方位から録られるので L ≠ R。
+        // ただし X-Y なので相関は高いまま (相互相関の検証は room::tests)。
+        let mut e = DulcimerEngine::new(SR, BLOCK);
+        e.note_on(69, 0.8);
+        let (l, r) = render_lr(&mut e, 0.5);
+        assert!(l.iter().any(|&s| s.abs() > 1e-3), "L が出ていない");
+        assert!(r.iter().any(|&s| s.abs() > 1e-3), "R が出ていない");
+        assert_ne!(l, r, "ROOM が L/R を分けていない");
+    }
+
+    #[test]
+    fn without_the_room_the_channels_match() {
+        let mut e = DulcimerEngine::new(SR, BLOCK);
+        e.set_room_enabled(false);
+        e.note_on(69, 0.8);
+        let (l, r) = render_lr(&mut e, 0.3);
         assert!(l.iter().any(|&s| s.abs() > 1e-3), "音が出ていない");
-        assert_eq!(l, r, "Phase 5 では L = R のはず");
+        assert_eq!(l, r, "ROOM off では L = R のはず");
+    }
+
+    #[test]
+    fn the_room_leaves_a_tail_after_a_choke() {
+        // アンビエントの要: 弦を止めても部屋の残響が残る。
+        let mut e = DulcimerEngine::new(SR, BLOCK);
+        e.note_on(60, 1.0);
+        render_lr(&mut e, 0.5);
+        e.choke(60);
+        // choke 直後: 響板 + 部屋の尾。
+        let (l, _) = render_lr(&mut e, 0.15);
+        let tail = l.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
+        assert!(tail > 1e-4, "残響の尾が無い: {tail:.3e}");
+
+        // ROOM off なら尾は響板だけで、もっと短い/小さい。
+        let mut dry = DulcimerEngine::new(SR, BLOCK);
+        dry.set_room_enabled(false);
+        dry.note_on(60, 1.0);
+        render_lr(&mut dry, 0.5);
+        dry.choke(60);
+        let (l2, _) = render_lr(&mut dry, 0.15);
+        let dry_tail = l2.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
+        assert!(
+            tail > dry_tail,
+            "部屋の尾が響板の尾より小さい: room {tail:.3e} vs dry {dry_tail:.3e}"
+        );
     }
 
     /// P5 の完了条件: ヘッドルーム。全 44 位置 ff でもフルスケール内。

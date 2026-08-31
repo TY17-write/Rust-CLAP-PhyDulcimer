@@ -35,6 +35,8 @@ INSTRUMENT (--instrument):
     --strike <0..0.5>      strike point x/L                       [default: 0.09]
     --no-coupling          disconnect the treble bridge coupling (A/B)
     --raw                  bypass soundboard+cabinet, output bridge force (A/B)
+    --no-room              bypass the X-Y room (measure with this; the room
+                           hides flaws in the instrument model)
 
     --soundboard           render the soundboard+cabinet impulse response
 
@@ -117,6 +119,7 @@ struct Args {
     keys: Vec<u8>,
     no_coupling: bool,
     raw: bool,
+    no_room: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -167,6 +170,7 @@ impl Default for Args {
             keys: Vec::new(),
             no_coupling: false,
             raw: false,
+            no_room: false,
         }
     }
 }
@@ -352,6 +356,9 @@ fn render_instrument(args: &Args) -> Result<(Vec<Vec<Sample>>, String), String> 
         engine.set_bridge_coupling(0.0);
     }
     engine.set_raw_output(args.raw);
+    if args.no_room {
+        engine.set_room_enabled(false);
+    }
 
     // --instrument の --vel は MIDI 的な 0–1 (--string の m/s とは違う)。
     let velocity = args.vel.clamp(0.0, 1.0);
@@ -374,11 +381,12 @@ fn render_instrument(args: &Args) -> Result<(Vec<Vec<Sample>>, String), String> 
     }
 
     let note = format!(
-        "instrument  keys {:?}, vel {:.2}, strike {:.3}, coupling {}, output {}",
+        "instrument  keys {:?}, vel {:.2}, strike {:.3}, coupling {}, room {}, output {}",
         args.keys,
         velocity,
         args.strike,
         if args.no_coupling { "OFF" } else { "on" },
+        if args.no_room { "OFF" } else { "on (X-Y)" },
         if args.raw {
             "RAW (bridge force)"
         } else {
@@ -616,6 +624,7 @@ fn parse_args(argv: Vec<String>) -> Result<Option<Args>, String> {
             ),
             "--no-coupling" => args.no_coupling = true,
             "--raw" => args.raw = true,
+            "--no-room" => args.no_room = true,
             "--soundboard" => args.mode = Mode::Soundboard,
 
             "--out" => args.out = PathBuf::from(value()?),

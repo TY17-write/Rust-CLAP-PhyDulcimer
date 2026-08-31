@@ -576,6 +576,63 @@ pub fn band_levels(samples: &[f32], sample_rate: f64) -> Vec<BandLevel> {
     out
 }
 
+/// L/R の相関の推定結果。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CorrelationEstimate {
+    /// ラグ 0 の正規化相関係数
+    pub at_zero: f64,
+    /// 最大の相関係数
+    pub best: f64,
+    /// 最大が現れたラグ [サンプル]。X-Y なら 0
+    pub best_lag: i64,
+}
+
+/// L/R の正規化相互相関を測る (X-Y の検証用、Phase 6)。
+///
+/// - `best_lag != 0` → どこかで L/R 間に遅延差が入っている (X-Y が壊れている)
+/// - `at_zero` → 直接音区間で 0.9 以上、残響区間で 0.5–0.8 が設計値
+pub fn stereo_correlation(
+    left: &[f32],
+    right: &[f32],
+    max_lag: usize,
+) -> Option<CorrelationEstimate> {
+    let n = left.len().min(right.len());
+    if n < max_lag * 4 || n == 0 {
+        return None;
+    }
+    let energy = |x: &[f32]| x.iter().map(|&v| (v as f64) * (v as f64)).sum::<f64>();
+    let denom = (energy(&left[..n]) * energy(&right[..n])).sqrt();
+    if denom <= 0.0 {
+        return None;
+    }
+
+    let mut best = (f64::MIN, 0i64);
+    let mut at_zero = 0.0;
+    for lag in -(max_lag as i64)..=(max_lag as i64) {
+        let mut acc = 0.0;
+        // ラグつきの 2 配列参照なので range で回す。
+        #[allow(clippy::needless_range_loop)]
+        for i in 0..n {
+            let j = i as i64 + lag;
+            if j >= 0 && (j as usize) < n {
+                acc += left[i] as f64 * right[j as usize] as f64;
+            }
+        }
+        let c = acc / denom;
+        if lag == 0 {
+            at_zero = c;
+        }
+        if c > best.0 {
+            best = (c, lag);
+        }
+    }
+    Some(CorrelationEstimate {
+        at_zero,
+        best: best.0,
+        best_lag: best.1,
+    })
+}
+
 /// 2 つの窓の振幅比から T60 [s] を求める。
 ///
 /// 単一の指数減衰を仮定した粗い推定。ダブルデケイがあると意味を失うが、

@@ -32,6 +32,7 @@ pub mod hammer;
 pub mod instrument;
 pub mod layout;
 pub mod modal;
+pub mod room;
 pub mod scaling;
 pub mod segment;
 pub mod smoke;

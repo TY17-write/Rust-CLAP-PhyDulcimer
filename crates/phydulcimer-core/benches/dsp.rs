@@ -10,6 +10,7 @@
 //! 叩き直すこと (`RESTRIKE_BLOCKS`)。
 
 use criterion::{criterion_group, criterion_main, Criterion};
+use phydulcimer_core::engine::DulcimerEngine;
 use phydulcimer_core::instrument::{Instrument, KEY_MAX, KEY_MIN};
 
 const SR: f64 = 48_000.0;
@@ -38,6 +39,26 @@ fn bench_instrument(c: &mut Criterion) {
                 strike_all(&mut inst);
             }
             std::hint::black_box(inst.process(&mut buf));
+        });
+    });
+
+    // 本命: エンジン全体 (弦 + 響板 ×2 + 箱 + ROOM + クリップ) の最悪ケース。
+    group.bench_function("engine/all44/block64", |b| {
+        let mut engine = DulcimerEngine::new(SR, BLOCK);
+        let mut l = [0.0f32; BLOCK];
+        let mut r = [0.0f32; BLOCK];
+        for key in KEY_MIN..=KEY_MAX {
+            engine.note_on(key, 1.0);
+        }
+        let mut n = 0usize;
+        b.iter(|| {
+            n += 1;
+            if n % RESTRIKE_BLOCKS == 0 {
+                for key in KEY_MIN..=KEY_MAX {
+                    engine.note_on(key, 1.0);
+                }
+            }
+            std::hint::black_box(engine.process_stereo(&mut l, &mut r));
         });
     });
 

@@ -15,6 +15,11 @@ use std::sync::atomic::{AtomicU32, Ordering};
 pub mod id {
     pub const LEVEL: u32 = 1;
     pub const STRIKE_POSITION: u32 = 2;
+    pub const ROOM: u32 = 3;
+    pub const MIC_DISTANCE: u32 = 4;
+    pub const XY_ANGLE: u32 = 5;
+    pub const ROOM_SIZE: u32 = 6;
+    pub const ABSORPTION: u32 = 7;
 }
 
 /// 1つのパラメータの仕様。
@@ -52,6 +57,57 @@ pub const PARAMS: &[ParamSpec] = &[
         unit: "",
         decimals: 3,
     },
+    ParamSpec {
+        id: id::ROOM,
+        // X-Y ステレオの部屋。DAW 側で空間を作りたいときのために切れる。
+        // **音質の測定・調整は必ず off で行うこと** (部屋は粗を隠す)。
+        name: b"Room",
+        min: 0.0,
+        max: 1.0,
+        default: 1.0,
+        unit: "",
+        decimals: 0,
+    },
+    ParamSpec {
+        id: id::MIC_DISTANCE,
+        // これ 1 本でタイト ⇔ アンビエントが出る (直接音だけが 1/d で落ちる)。
+        name: b"Mic Distance",
+        min: 0.3,
+        max: 3.0,
+        default: 1.2,
+        unit: " m",
+        decimals: 2,
+    },
+    ParamSpec {
+        id: id::XY_ANGLE,
+        // X-Y の開き角。実物どおりは 90°。幅が控えめなのは方式の音。
+        name: b"X-Y Angle",
+        min: 60.0,
+        max: 135.0,
+        default: 90.0,
+        unit: " deg",
+        decimals: 0,
+    },
+    ParamSpec {
+        id: id::ROOM_SIZE,
+        // 0 = Small, 1 = Medium, 2 = Large。
+        name: b"Room Size",
+        min: 0.0,
+        max: 2.0,
+        default: 1.0,
+        unit: "",
+        decimals: 0,
+    },
+    ParamSpec {
+        id: id::ABSORPTION,
+        // 壁の吸音率。RT60 と高域の落ち方を決める。
+        name: b"Wall Absorption",
+        min: 0.0,
+        max: 0.9,
+        default: 0.35,
+        unit: "",
+        decimals: 2,
+    },
 ];
 
 /// `id` に対応する仕様を返す。
@@ -84,6 +140,11 @@ impl AtomicF32 {
 pub struct ParamValues {
     pub level: AtomicF32,
     pub strike_position: AtomicF32,
+    pub room: AtomicF32,
+    pub mic_distance: AtomicF32,
+    pub xy_angle: AtomicF32,
+    pub room_size: AtomicF32,
+    pub absorption: AtomicF32,
 }
 
 impl Default for ParamValues {
@@ -98,6 +159,11 @@ impl ParamValues {
         Self {
             level: AtomicF32::new(default_of(id::LEVEL)),
             strike_position: AtomicF32::new(default_of(id::STRIKE_POSITION)),
+            room: AtomicF32::new(default_of(id::ROOM)),
+            mic_distance: AtomicF32::new(default_of(id::MIC_DISTANCE)),
+            xy_angle: AtomicF32::new(default_of(id::XY_ANGLE)),
+            room_size: AtomicF32::new(default_of(id::ROOM_SIZE)),
+            absorption: AtomicF32::new(default_of(id::ABSORPTION)),
         }
     }
 
@@ -108,6 +174,11 @@ impl ParamValues {
         match id {
             id::LEVEL => self.level.store(v),
             id::STRIKE_POSITION => self.strike_position.store(v),
+            id::ROOM => self.room.store(v),
+            id::MIC_DISTANCE => self.mic_distance.store(v),
+            id::XY_ANGLE => self.xy_angle.store(v),
+            id::ROOM_SIZE => self.room_size.store(v),
+            id::ABSORPTION => self.absorption.store(v),
             _ => {}
         }
     }
@@ -117,6 +188,11 @@ impl ParamValues {
         Some(match id {
             id::LEVEL => self.level.load() as f64,
             id::STRIKE_POSITION => self.strike_position.load() as f64,
+            id::ROOM => self.room.load() as f64,
+            id::MIC_DISTANCE => self.mic_distance.load() as f64,
+            id::XY_ANGLE => self.xy_angle.load() as f64,
+            id::ROOM_SIZE => self.room_size.load() as f64,
+            id::ABSORPTION => self.absorption.load() as f64,
             _ => return None,
         })
     }

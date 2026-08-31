@@ -13,7 +13,8 @@ use std::process::ExitCode;
 
 use phydulcimer_analyze::{
     band_levels, estimate_fundamental, estimate_inharmonicity, estimate_partial_t60_with,
-    estimate_t60, find_partial, goertzel_magnitude, modulation_depth, read_wav, to_db, Wav,
+    estimate_t60, find_partial, goertzel_magnitude, modulation_depth, read_wav, stereo_correlation,
+    to_db, Wav,
 };
 
 const USAGE: &str = "\
@@ -43,6 +44,9 @@ OPTIONS:
     --bands                half-octave band levels (31.5 Hz - 16 kHz).
                            for calibrating the soundboard IR; do not judge
                            by single partials (they swing 20-30 dB)
+    --correlation          L/R cross-correlation (stereo input only).
+                           the peak must sit at lag 0 for X-Y; window with
+                           --offset/--window to separate direct vs tail
 
     -h, --help             show this help
 
@@ -72,6 +76,7 @@ struct Args {
     t60_hop: f64,
     modulation: bool,
     bands: bool,
+    correlation: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +103,7 @@ impl Default for Args {
             t60_hop: 0.05,
             modulation: false,
             bands: false,
+            correlation: false,
         }
     }
 }
@@ -160,6 +166,28 @@ fn run() -> Result<(), String> {
         println!("{:>10}  {:>8}", "center", "dB");
         for b in band_levels(&samples, sr) {
             println!("{:>10.1}  {:>8.2}", b.center_hz, b.level_db);
+        }
+    }
+
+    if args.correlation {
+        if wav.channel_count() < 2 {
+            return Err("--correlation はステレオの WAV が必要です".into());
+        }
+        let l = slice_window(&wav.channels[0], sr, args.offset, args.window)?;
+        let r = slice_window(&wav.channels[1], sr, args.offset, args.window)?;
+        match stereo_correlation(&l, &r, 48) {
+            Some(c) => {
+                println!(
+                    "L/R correlation   at lag 0: {:.3}   best: {:.3} at lag {}",
+                    c.at_zero, c.best, c.best_lag
+                );
+                if c.best_lag != 0 {
+                    println!(
+                        "WARNING: peak is off lag 0 — an inter-channel delay exists (not X-Y)"
+                    );
+                }
+            }
+            None => println!("L/R correlation   —  (測れません)"),
         }
     }
 
@@ -309,6 +337,7 @@ fn parse_args(argv: Vec<String>) -> Result<Option<Args>, String> {
             "--t60-hop" => args.t60_hop = parse_f64(&value()?, "--t60-hop")?,
             "--modulation" => args.modulation = true,
             "--bands" => args.bands = true,
+            "--correlation" => args.correlation = true,
             other => return Err(format!("不明な引数: {other}")),
         }
     }

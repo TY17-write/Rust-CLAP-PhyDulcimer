@@ -429,7 +429,9 @@ fn rendered_pitch_matches_equal_temperament() {
 }
 
 #[test]
-fn both_channels_carry_the_signal() {
+fn the_room_separates_the_channels_and_the_switch_restores_mono() {
+    // ROOM (既定 ON): バス/トレブルの 2 系統が別の方位から録られ L ≠ R。
+    // Room = Off にすれば L = R に戻る (DAW 側で空間を作りたいとき用)。
     let mut rig = Rig::new();
     let (left, right) = rig.render(40, |b, ev| {
         if b == 0 {
@@ -438,8 +440,17 @@ fn both_channels_carry_the_signal() {
     });
     assert!(peak(&left) > 0.001);
     assert!(peak(&right) > 0.001);
-    // ROOM (Phase 6) までは L = R。分かれたらこのテストをそちらの検証に変える。
-    assert_eq!(left, right, "Phase 6 より前に L/R が分かれている");
+    assert_ne!(left, right, "ROOM が L/R を分けていない");
+
+    let mut rig = Rig::new();
+    let (left, right) = rig.render(40, |b, ev| {
+        if b == 0 {
+            push_param(ev, plugin_params::id::ROOM, 0.0);
+            push_note_on(ev, 0, 60, 0.8);
+        }
+    });
+    assert!(peak(&left) > 0.001);
+    assert_eq!(left, right, "Room=Off で L = R に戻っていない");
 }
 
 #[test]
