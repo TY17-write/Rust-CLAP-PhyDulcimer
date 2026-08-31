@@ -2,13 +2,12 @@
 resolver = "2"
 members = [
     "crates/phydulcimer-core",
+    "crates/phydulcimer-plugin",
     "tools/render",
     "tools/analyze",
 ]
 
-# Phase 2 で `crates/phydulcimer-plugin`、Phase 9 で `crates/phydulcimer-gui` が
-# ここに加わる。clack と egui の依存はそのときに足す — 使わないうちから
-# 書いておくと、fetch とビルドの時間だけが増える。
+# Phase 9 で `crates/phydulcimer-gui` がここに加わる。egui の依存はそのときに足す。
 
 [workspace.package]
 version = "0.1.0"
@@ -19,8 +18,31 @@ rust-version = "1.85"
 [workspace.dependencies]
 phydulcimer-core = { path = "crates/phydulcimer-core" }
 
+# CLAP。revision で固定する。clack はまだ API が動くので、追従は意図的に行う。
+# trisphere / egui-clap-host と同じ revision に揃えてあり、あちらのホストで
+# そのまま読み込んで動作確認できる。
+clack-plugin = { git = "https://github.com/prokopyl/clack.git", rev = "c5975f9f89f0953b00768680357985d46178078a" }
+# `clack-plugin` 機能を有効にすると `PluginEntry::load_from_clack` が使える。
+# ビルド済みの `.clap` をファイルから読まなくても、CLAP の ABI 経路をそのまま
+# テストできる (`crates/phydulcimer-plugin/tests/clap_host.rs`)。
+clack-host = { git = "https://github.com/prokopyl/clack.git", rev = "c5975f9f89f0953b00768680357985d46178078a", features = [
+    "clack-plugin",
+] }
+clack-extensions = { git = "https://github.com/prokopyl/clack.git", rev = "c5975f9f89f0953b00768680357985d46178078a", features = [
+    "clack-plugin",
+    "clack-host",
+    "audio-ports",
+    "note-ports",
+    "params",
+] }
+
 hound = "3.5"
 approx = "0.5"
+
+# `process` のアロケーション 0 を機械的に保証する (テスト専用)。
+# 既定機能の `disable_release` は release ビルドで検査を丸ごと消す。
+# このテストは release で走らせるのが常なので、明示的に切って検査を残す。
+assert_no_alloc = { version = "1.1", default-features = false }
 
 # SIMD。stable Rust のまま f32x8 が使える (Phase 8 で使う)。
 wide = "0.7"
@@ -37,4 +59,9 @@ codegen-units = 1
 
 # DSP の実験は dev ビルドでも実時間で回したいので、依存クレートは最適化しておく。
 [profile.dev.package."*"]
+opt-level = 2
+
+# 全 44 弦を常時回す設計なので、デバッグビルドの DSP コアが opt 0 だと
+# ABI テスト (数秒ぶんのオーディオをレンダリングする) が分単位になる。
+[profile.dev.package.phydulcimer-core]
 opt-level = 2

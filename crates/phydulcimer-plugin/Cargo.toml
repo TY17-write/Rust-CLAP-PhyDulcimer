@@ -1,0 +1,23 @@
+[package]
+name = "phydulcimer-plugin"
+description = "CLAP plugin front-end for PhyDulcimer (clack)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+# CLAP プラグインは共有ライブラリ。`.clap` は cdylib をリネームしたもの。
+# rlib も出しておくと統合テストから直接叩ける。
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+phydulcimer-core.workspace = true
+clack-plugin.workspace = true
+clack-extensions.workspace = true
+
+[dev-dependencies]
+# CLAP ホスト側を自前で立てて、プラグインを ABI 経由で検証するため。
+clack-host.workspace = true
+# `process` のアロケーション 0 を機械的に保証する。
+assert_no_alloc.workspace = true

@@ -31,13 +31,13 @@ Rust で書くハンマーダルシマー物理モデリング音源 (CLAP プ�
 
 ## 現在の状態
 
-**Phase 1 (1 区間の弦 + 硬い撥) 完了。**
+**Phase 2 (CLAP 化) 完了。** DAW で弾ける状態になった (実機確認は未実施)。
 
 | Phase | 内容 | 状態 |
 |---|---|---|
 | 0 | ワークスペース骨組み / ドキュメント / オフラインレンダラ・解析ツール | ✅ 完了 |
 | 1 | 1 区間の弦 + 硬い撥 | ✅ 完了 |
-| 2 | CLAP 化 (clack) — 弾ける状態にする | 未着手 |
+| 2 | CLAP 化 (clack) — 弾ける状態にする | ✅ 完了 (実機確認待ち) |
 | 3 | 楽器全体 (配置表・全弦常時・ロール) | 未着手 |
 | 4 | ブリッジ結合 (この音源の中身) | 未着手 |
 | 5 | 響板と箱 | 未着手 |
@@ -47,7 +47,7 @@ Rust で書くハンマーダルシマー物理モデリング音源 (CLAP プ�
 | 9 | GUI とプリセット | 未着手 |
 | 10 | 音色の追い込み | 未着手 |
 
-テスト 98 件、`cargo clippy` / `cargo fmt` ともにクリーン。
+テスト 135 件、`cargo clippy` / `cargo fmt` ともにクリーン。
 
 **計画の正は Artifact**: https://claude.ai/code/artifact/a650768b-6e46-4ba6-a022-0a3ab186990d
 ([`docs/plan.html`](docs/plan.html) はそのコピー)
@@ -58,6 +58,29 @@ Rust で書くハンマーダルシマー物理モデリング音源 (CLAP プ�
 cargo build --release --workspace
 cargo test --workspace
 ```
+
+## CLAP プラグインとして使う
+
+```bash
+cargo build --release -p phydulcimer-plugin
+copy target\release\phydulcimer_plugin.dll target\PhyDulcimer.clap
+```
+
+`.clap` は **`target\` 直下**に置く (`target\release\` だと `cargo clean -p` で消える)。
+これを DAW の CLAP フォルダへ入れる。
+
+- 鍵域は **G2–D6 (MIDI 43–86)**。外の鍵は鳴らない (暫定のクロマチック配置、
+  [D-014](docs/problems.md))
+- **離鍵しても鳴り続けるのが仕様** (ダンパーが無い)。止まるのはホストの停止時だけ
+- パラメータ: `Level` / `Strike Position` (打弦点 x/L、次の打撃から効く)
+
+### 実機確認チェックリスト (DAW でしか確認できない)
+
+1. ロードできて音が出るか
+2. **離鍵しても鳴り続けるか** (切れたらバグ)
+3. 再生停止で音が止まるか / ループ折り返しで響きが積み上がらないか
+4. Level / Strike Position がオートメーションに乗るか
+5. 連打 (ロール) が自然に重なるか
 
 ## 使い方 (Phase 1)
 
@@ -120,6 +143,10 @@ cargo run --release -p phydulcimer-analyze -- --in out/smoke.wav --f0 --t60
 - 撥の剛性は物理定数ではなく、接触時間からの校正値 ([D-011](docs/problems.md))
 - 木の撥はチャタリングし、「接触時間の合計」は収束した観測量ではない
   ([D-012](docs/problems.md))
+- 出力の校正は暫定。打撃スパイクが支配的で、持続部は小さめに出る
+  ([D-013](docs/problems.md))
+- 弦バンクは暫定形 (クロマチック 44 鍵・コース 1 本・ブリッジ結合なし)
+  ([D-014](docs/problems.md))
 - 響板は板のシミュレーションではなくフィルタ近似 (Phase 5 で実装予定)
 
 ## 参照元

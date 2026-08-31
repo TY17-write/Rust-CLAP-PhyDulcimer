@@ -17,16 +17,33 @@
 
 ## 1. 現在地
 
-**Phase 1 (1 区間の弦 + 硬い撥) 完了。**
+**Phase 2 (CLAP 化) 完了 — ただし DAW での実機確認が未実施。**
 
 | Phase | 内容 | 状態 |
 |---|---|---|
 | 0 | ワークスペース骨組み / ドキュメント / render・analyze | ✅ |
 | 1 | 1 区間の弦 + 硬い撥 (modal / hammer / segment) | ✅ |
-| 2 | CLAP 化 | 未着手 |
-| 3〜10 | (`plan.html` §07) | 未着手 |
+| 2 | CLAP 化 (instrument / plugin / ABI テスト) | ✅ (実機確認待ち) |
+| 3 | 楽器全体 (配置表・設計則) | 未着手 |
+| 4〜10 | (`plan.html` §07) | 未着手 |
 
-テスト 98 件、`cargo clippy` / `cargo fmt` ともにクリーン。
+テスト 135 件、`cargo clippy` / `cargo fmt` ともにクリーン。
+
+### DAW で確認してほしいこと (自動テストでは検証できない)
+
+```bash
+cargo build --release -p phydulcimer-plugin
+copy target\release\phydulcimer_plugin.dll target\PhyDulcimer.clap
+```
+
+1. ロードできて音が出るか (鍵域 **G2–D6 = MIDI 43–86**。外は無音が正しい)
+2. **離鍵しても鳴り続けるか** (この楽器の仕様。音が切れたらバグ)
+3. 再生を止めたら音が止まるか / ループ折り返しで響きが積み上がらないか
+4. Level と Strike Position がホストのオートメーションに乗るか
+5. 連打 (ロール) が自然に重なるか
+
+PhyPiano では実機で 3 件の不具合が出た (自動テストでは出ない種類)。
+同じ想定でいること。
 
 Phase 1 で決めたこと (数値の根拠は [problems.md](problems.md)):
 
@@ -128,6 +145,16 @@ cargo run --release -p phydulcimer-analyze -- --in out/tone.wav \
 打弦点 0.09 では第 11 部分音 (1/0.09 ≈ 11) がノッチに埋もれ、アナライザの走査が
 隣の部分音を拾う (+174 cent と表示される)。**異常ではなくノッチの傍証。**
 
+### Phase 2 — プラグイン
+
+| 項目 | 値 |
+|---|---|
+| 生ピーク (撥 0.5 / 2.0 / 6.0 m/s) | **4.7 / 21.5 / 83.3 N** — スパイク支配 ([D-013](problems.md)) |
+| クレストファクタ (スパイク / 持続部) | **20–40 倍** |
+| `CALIBRATED_GAIN` (暫定) | **0.004** (ff 単音 ≈ −9 dBFS) |
+| 鍵域 | MIDI **43–86** (G2–D6、クロマチック 44 鍵の暫定配置) |
+| `process` のアロケーション | **0** (`assert_no_alloc` が ABI テスト全体で監視) |
+
 ---
 
 ## 5. 判断とその理由
@@ -189,20 +216,19 @@ PhyPiano は親ディレクトリの `CLAUDE.md` を継承していて自前で�
 
 ## 6. 次にやること
 
-**Phase 2 — CLAP 化。** `plan.html` の P2。
+**まず §1 の DAW 実機確認。** その後 **Phase 3 — 楽器全体** (`plan.html` の P3)。
 
-1. clack は **revision `c5975f9` に固定** (`trisphere` / `egui-clap-host` と揃える)
-2. **出力は最初から 2ch** (Phase 6 の ROOM が来る前提)
-3. 仮の弦バンク (単区間 × 44) を常時回す。ブリッジ結合はまだ無い
-4. CLAP の ABI を通す自前ホストのテスト (`tests/clap_host.rs`) を最初から持つ。
-   書き方は PhyPiano の `crates/phypiano-plugin/tests/clap_host.rs` が手本
-5. `process` のアロケーション 0 を機械的に保証する
-6. **音が出る確認は `egui-clap-host` と DAW で。GUI 確認はユーザーに依頼する**
+1. `layout.rs` — **15/14 の配置表** (D/G 全音階)。クロマチック暫定配置
+   ([D-014](problems.md)) を置き換える。同じ音高が複数の場所に存在するので
+   MIDI からの割当は 1 対多
+2. `scaling.rs` — 音域ごとの設計則。低音は短く太い巻線弦。導いた線径が
+   文献値の範囲に入ることが完了条件 (参照音源を持たないので、ここが外部基準)
+3. **[D-001](problems.md) に先に当たること** — 高音コースの T60 は 0.4 秒を
+   切る見込みで、いまの `--partial-t60` では測れない。窓とホップを引数にする
+4. 最悪ケース (全 44 音を叩いた直後) の CPU を criterion で測る
 
 clack の API は `~\.cargo\git\checkouts\` を直接読むのが早い。**revision を
-間違えないこと** (PhyPiano の引き継ぎメモ §5 に主な相違点の一覧がある)。
-
-Phase 3 に入るときは [D-001](problems.md) (高音の T60 が測れない) に先に当たること。
+間違えないこと** (`Cargo.lock` が固定しているコミットを見る)。
 
 ### 触るときに壊さないでほしいもの
 
@@ -213,3 +239,7 @@ Phase 3 に入るときは [D-001](problems.md) (高音の T60 が測れない) 
 - `oversampling_is_converged_at_the_default` テスト — os=16 の収束の固定。
   **os=4/8 と比べる形に書き換えないこと** (そちらは収束していない)
 - `faces_are_ordered_from_hard_to_soft` テスト — 撥の面の順序
+- `note_off_does_not_stop_the_ring` (core と ABI の両方) — この楽器の定義
+- `ringing_strings_do_not_survive_a_loop_restart` — ループ折り返しの安全装置
+- ABI テストの `assert_no_alloc` — `Cargo.toml` の `default-features = false` を
+  外すと **release で検査が消えて素通りになる** (既定機能の `disable_release`)

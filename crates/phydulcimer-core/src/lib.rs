@@ -7,15 +7,16 @@
 //! - ファイル I/O をしない
 //! - オーディオ経路で panic しうる操作 (添字外アクセス、`unwrap`) をしない
 //!
-//! 段階的に構築中。現在は **Phase 1 — 1 区間の弦と硬い撥**。
+//! 段階的に構築中。現在は **Phase 2 — CLAP 化** (弦バンクは暫定形)。
 //!
 //! - [`modal`] — 並列2次共振器バンク (弦のモード)
 //! - [`hammer`] — 非線形の撥 (Hunt-Crossley)
 //! - [`segment`] — 弦の 1 区間。設計則・打弦点・ブリッジ力
+//! - [`instrument`] — 全弦の常時走行 (ボイスプールは無い)。Phase 2 は単区間 × 44 の暫定形
 //! - [`smoke`] — 疎通確認用の減衰正弦波 (Phase 0)
 //!
-//! まだ無いもの: ブリッジ結合 (Phase 4)、楽器全体 (Phase 3)、響板と箱 (Phase 5)、
-//! X-Y の部屋 (Phase 6)。
+//! まだ無いもの: 15/14 の配置表と実機の設計則 (Phase 3)、ブリッジ結合 (Phase 4)、
+//! 響板と箱 (Phase 5)、X-Y の部屋 (Phase 6)。
 //!
 //! この音源がピアノと構造的に違う点 (ダンパーが無い / ブリッジが弦を 2 つに分ける /
 //! 打弦点が可変 / X-Y の部屋を内蔵する) は `docs/plan.html` を参照。
@@ -23,6 +24,7 @@
 #![forbid(unsafe_code)]
 
 pub mod hammer;
+pub mod instrument;
 pub mod modal;
 pub mod segment;
 pub mod smoke;
