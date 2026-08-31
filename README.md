@@ -33,12 +33,12 @@ Rust で書くハンマーダルシマー物理モデリング音源 (CLAP プ�
 | 4 | ブリッジ結合 (この音源の中身) | ✅ 完了 |
 | 5 | 響板と箱 | ✅ 完了 |
 | 6 | ROOM — X-Y ステレオ | ✅ 完了 |
-| 7 | 演奏表現 (打弦点・ハンマー面・ミュート) | 未着手 |
+| 7 | 演奏表現 (撥の面・ミュート・音律・配置切り替え) | ✅ 完了 (コア 4 項目。ダンパーペダル・ハーモニクスはスコープ外) |
 | 8 | 最適化 (SIMD) | 未着手 |
 | 9 | GUI とプリセット | 未着手 |
 | 10 | 音色の追い込み | 前半のみ完了 (音域バランスの LUFS 校正) |
 
-テスト 194 件、`cargo clippy` / `cargo fmt` ともにクリーン。
+テスト 215 件、`cargo clippy` / `cargo fmt` ともにクリーン。
 全体計画とフェーズ構成は [`docs/plan.html`](docs/plan.html)。
 
 ## ビルド
@@ -58,29 +58,40 @@ copy target\release\phydulcimer_plugin.dll target\PhyDulcimer.clap
 `.clap` は **`target\` 直下**に置く (`target\release\` だと `cargo clean -p` で消える)。
 これを DAW の CLAP フォルダへ入れる。
 
-- 鍵域は **G2–D6 (MIDI 43–86)**、ただし**全音階配置** (G / D メジャー)。
+- 鍵域は既定で **G2–D6 (MIDI 43–86)** の**全音階配置** (G / D メジャー)。
   実機どおり半音の欠落があり、**G#・Bb・D#・F などの鍵は鳴らない**
-  ([D-017](docs/problems.md))。C#5 / C#6 だけは存在する
+  ([D-017](docs/problems.md))。C#5 / C#6 だけは存在する。
+  `Layout` パラメータで **E3–E6 半音階 37 音** (クロマチックダルシマー) に
+  切り替えられる (弦バンクの再構築を伴うので**次の activate から**効く)
 - 同じ音高が複数の位置にあるときは最も長い区間 (バス → トレブル右 → 左) を叩く
-- トレブル左にしか無い音 (C#5, A5, B5, C#6, D6) は純正5度の帰結で **+2 cent**
+- トレブル左にしか無い音 (15/14 では C#5, A5, B5, C#6, D6) は純正5度の帰結で
+  **+2 cent**。`Temperament = Equal` でブリッジを僅かに動かし平均律に乗せられる
+  (これも activate 時)
 - **離鍵しても鳴り続けるのが仕様** (ダンパーが無い)。止まるのはホストの停止時だけ
 - パラメータ: `Level` / `Strike Position` (打弦点 x/L、次の打撃から効く) /
   `Room` (on/off) / `Mic Distance` (0.3–3 m — これ 1 本でタイト ⇔ アンビエント) /
-  `X-Y Angle` (60–135°) / `Room Size` (S/M/L) / `Wall Absorption`
+  `X-Y Angle` (60–135°) / `Room Size` (S/M/L) / `Wall Absorption` /
+  `Hammer Face` (Wood/Leather/Felt、次の打撃から) /
+  `Mute` (パームミュート 0–1、鳴っている弦に即効く) /
+  `Temperament` (Pure Fifth/Equal) / `Layout` (Diatonic 15/14 / Chromatic E3-E6)
 - **ROOM は X-Y ステレオの模倣**: L/R に時間差を作らない (定位はレベル差だけ)。
   DAW 側で空間を作るときは `Room = Off`。**音質の判断も必ず Off で**
 
-設計表 (44 位置の長さ・線径・巻線・張力・応力・B) は:
+設計表 (発音位置の長さ・線径・巻線・張力・応力・B) は:
 
 ```bash
 cargo run --release -p phydulcimer-render -- --table
 ```
 
+半音階は `--table --layout chromatic`。
+
 ### MIDI CC (GUI が入る Phase 9 までの操作手段)
 
 | CC | パラメータ | 値の意味 |
 |---|---|---|
+| **CC1** | Mute | 0 = 開放 / 127 = 手のひらで押さえ切る (モジュレーションホイール) |
 | **CC7** | Level | 0–127 → 0–1 |
+| **CC70** | Hammer Face | 0–42 = Wood / 43–84 = Leather / 85–127 = Felt |
 | **CC74** | Strike Position | 0 = ブリッジ寄り x/L 0.03 (明るい) / 127 = 中央寄り 0.30 (丸い) |
 
 CC とホストのオートメーションは同じ値を動かす (後勝ち)。
@@ -93,8 +104,10 @@ CC とホストのオートメーションは同じ値を動かす (後勝ち)�
 2. 離鍵しても鳴り続けるか (切れたらバグ)
 3. 再生停止で音が止まるか / ループ再生で音量が頭打ちになるか
    (連打で膨らむのはロールの物理として正しいが、際限なく増えたらバグ)
-4. パラメータと CC (CC7 / CC74) がオートメーションに乗るか
+4. パラメータと CC (CC1 / CC7 / CC70 / CC74) がオートメーションに乗るか
 5. L/R の定位 — 低音がやや左、高音がやや右 (楽器の幾何から出る)
+6. `Layout` / `Temperament` の変更でホストが再 activate するか
+   (request_restart 対応ホスト)。非対応でも次の再生開始/再ロードで反映される
 
 ## 検証ツール (render / analyze)
 

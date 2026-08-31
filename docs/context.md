@@ -28,11 +28,39 @@
 | 4 | ブリッジ結合・弦 2 本・うなり | ✅ |
 | 5 | 響板と箱 (engine / soundboard / cabinet) | ✅ |
 | 6 | ROOM — X-Y ステレオ (room / パラメータ 5 つ) | ✅ |
-| 7 | 演奏表現 (撥の面・ミュート・配置切り替え) | 未着手 |
+| 7 | **演奏表現 (撥の面・ミュート・音律・配置切り替え)** | ✅ (2026-08-31、コア 4 項目) |
 | 8〜9 | (`plan.html` §07) | 未着手 |
 | 10 前半 | **音域バランス (LUFS 校正)** | ✅ (2026-08-31) |
 
-テスト 194 件、`cargo clippy` / `cargo fmt` ともにクリーン。
+テスト 215 件、`cargo clippy` / `cargo fmt` ともにクリーン。
+
+### Phase 7 で決めたこと (演奏表現、コア 4 項目)
+
+- **スコープ**: 撥の面・パームミュート・ブリッジ位置 (音律)・配置切り替えの
+  4 項目 + 完了条件 (打弦点掃引)。**ダンパーペダルとハーモニクスは見送り**
+  (設計が薄い。ハーモニクスは `ModalBank::set_mode_damping` で実現可能な
+  素地だけある)。マイクロチューニングは計画どおり保留
+- **指標を先に作った**: `analyze --centroid` (部分音重心 — FFT 全帯域はノイズ
+  床に汚れるので、`find_partial` の走査で実在部分音だけを拾う)。完了条件は
+  `tests/strike_sweep.rs` が固定 — 重心 1500 Hz (x/L 0.03) → 897 Hz (0.30)、
+  x/L = 1/整数 の点でノッチが部分音を丸ごと消す**コム通過リップル** (+63 Hz)
+  は物理として許容
+- **撥の面**: `HammerParams::for_face` は P1 から存在、セッターの配線のみ。
+  次の打撃から効く (係数再構築は strike_pair の遅延実行)。param 8 + CC70
+- **ミュート**: `ModalBank` のモード別減衰 (P7 予約済みだった) の配線。
+  再構築なしで鳴っている弦に即効く。カーブは校正値 → [D-023](problems.md)。
+  param 9 + CC1
+- **音律**: `TREBLE_LONG_SHARE = 0.6` を `Temperament` (Pure 0.6 / Equal
+  r/(1+r)) に昇格。左区間の周波数は分割比から導かれるまま (物理を曲げない)
+- **配置**: `scaling::design_position` の `55 + course_offset` ハードコードを
+  廃止し、音高を配置表から取る形へ (`design_position_with` + `DesignContext`)。
+  半音階 E3–E6 はバス 52..=63 + 右 64..=81 + 左 +7 = **37 音 48 位置**。
+  ジオメトリは published-ranges テストが外部基準。音域バランスは
+  15/14 表 + 補正表 → [D-022](problems.md)
+- **activate 時適用**: Layout/Temperament は弦バンク再構築を伴うので
+  activate で読む。変更検出時は `host.request_restart()` を一度だけ要求
+  (非対応ホストは次の activate で反映)。`assert_no_alloc` は process のみを
+  包むので activate 内の確保は検査に掛からない (設計どおり)
 
 ### Phase 10 前半で決めたこと (音域バランス)
 
@@ -157,6 +185,9 @@ cargo run --release -p phydulcimer-render -- --instrument --sweep --out out/swee
 cargo run --release -p phydulcimer-analyze -- --in out/sweep/key-69.wav --lufs
 ```
 
+半音階は `--layout chromatic` を付ける (render の --sweep / --table / --instrument 共通)。
+打弦点の指標は `analyze --centroid --f0ref <HZ>` (部分音重心、Phase 7)。
+
 ### 測るときに知っておくこと
 
 - **`--peak` の既定は 0 (正規化しない)** ([D-004](problems.md))。
@@ -224,6 +255,19 @@ cargo run --release -p phydulcimer-analyze -- --in out/sweep/key-69.wav --lufs
 | クレストファクタ (スパイク / 持続部) | **20–40 倍** |
 | `CALIBRATED_GAIN` (暫定) | **0.004** (ff 単音 ≈ −9 dBFS) |
 | `process` のアロケーション | **0** (`assert_no_alloc` が ABI テスト全体で監視) |
+
+### Phase 7 — 演奏表現 (2026-08-31)
+
+| 項目 | 実測 |
+|---|---|
+| 打弦点掃引の重心 (C4 ff、x/L 0.03→0.30) | **1500 → 1258 → 1181 → 1043 → 1106 → 1024 → 897 Hz** (0.125 の落ち込みはノッチが第 8 部分音を消すコム効果) |
+| ノッチ追随 | x/L=1/4 で第 4 部分音が第 3 の 5% 未満、1/8 で第 8 が消え第 4 は 10 倍以上復活 |
+| 面の明るさ比 (生ブリッジ力、高次/低次) | wood 0.41 / felt 0.21 (響板通過後はさらに開く — ABI テストで 1/2 以下) |
+| フルミュートの尾部 RMS (0.8 s 以降) | 開放の **1/20 未満** |
+| 半音階の LUFS (補正前 → 後) | 広がり 9.9 LU (±4.8) → **±0.78 LU** (D-022) |
+| 半音階の A4 M-max | −23.94 LUFS (15/14 は −22.23 — 楽器が違うので基準も別) |
+| 全鍵 ff ヘッドルーム (半音階 37 鍵) | ピーク ≤ 1.0・>0.3 (テスト固定) |
+| エンジン最悪ケース (このマシン、ROOM on) | 15/14 全 44 ff **127 µs** / 半音階全 48 ff **117 µs** — 半音階は位置が多いがモード総数が少なく軽い |
 
 ### Phase 10 前半 — 音域バランス (2026-08-31、ff・3 s・ROOM off・vel 1.0)
 
