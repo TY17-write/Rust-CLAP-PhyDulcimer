@@ -100,12 +100,6 @@ Phase 1 で決めたこと (数値の根拠は [problems.md](problems.md)):
   https://claude.ai/code/artifact/a650768b-6e46-4ba6-a022-0a3ab186990d
   (所有者のみ閲覧可)。計画を直すときは Artifact 側を更新してから
   `docs/plan.html` へコピーし直す。新しい Artifact を作るとリンクが分裂する
-- git identity — グローバル設定が無い環境なので、新しい PC では設定が必要:
-
-```bash
-git config user.name "TY17"
-git config user.email "310846857+TY17-write@users.noreply.github.com"
-```
 
 ### 隣のプロジェクト
 
