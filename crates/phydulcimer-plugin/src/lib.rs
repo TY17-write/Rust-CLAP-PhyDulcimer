@@ -28,9 +28,11 @@
 // 衝突する。このクレートで unsafe を書くのはそのマクロだけなので `deny` にする。
 #![deny(unsafe_code)]
 
+pub mod editor;
 pub mod params;
 pub mod ring;
 
+use clack_extensions::gui::PluginGui;
 use clack_extensions::{audio_ports::*, note_ports::*, params::*};
 use clack_plugin::events::event_types::ParamValueEvent;
 use clack_plugin::events::spaces::CoreEventSpace;
@@ -136,7 +138,8 @@ impl Plugin for PhyDulcimerPlugin {
         builder
             .register::<PluginAudioPorts>()
             .register::<PluginNotePorts>()
-            .register::<PluginParams>();
+            .register::<PluginParams>()
+            .register::<PluginGui>();
     }
 }
 
@@ -161,7 +164,10 @@ impl DefaultPluginFactory for PhyDulcimerPlugin {
         _host: HostMainThreadHandle<'a>,
         shared: &'a PhyDulcimerShared,
     ) -> Result<PhyDulcimerMainThread<'a>, PluginError> {
-        Ok(PhyDulcimerMainThread { shared })
+        Ok(PhyDulcimerMainThread {
+            shared,
+            editor: editor::EditorState::new(),
+        })
     }
 }
 
@@ -216,7 +222,7 @@ impl SharedState {
     }
 
     /// 溜まった GUI 変更を取り出してクリアする (process が呼ぶ)。
-    fn take_gui_edits(&self) -> u32 {
+    pub(crate) fn take_gui_edits(&self) -> u32 {
         self.gui_edits.swap(0, Ordering::Acquire)
     }
 }
@@ -259,7 +265,9 @@ fn temperament_code(temperament: Temperament) -> u32 {
 }
 
 pub struct PhyDulcimerMainThread<'a> {
-    shared: &'a PhyDulcimerShared,
+    pub(crate) shared: &'a PhyDulcimerShared,
+    /// エディタウィンドウの状態 (gui 拡張は全部 `&self` で来るため内部可変)
+    pub(crate) editor: editor::EditorState,
 }
 
 impl<'a> PluginMainThread<'a, PhyDulcimerShared> for PhyDulcimerMainThread<'a> {}
@@ -520,7 +528,7 @@ impl PhyDulcimerAudioProcessor<'_> {
                 continue;
             };
             let event = ParamValueEvent::new(0, id, Pckn::match_all(), value);
-            let _ = out.try_push(&event);
+            let _ = out.try_push(event);
         }
     }
 
