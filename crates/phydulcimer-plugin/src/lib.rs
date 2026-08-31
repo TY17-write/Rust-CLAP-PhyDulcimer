@@ -29,15 +29,18 @@
 #![deny(unsafe_code)]
 
 pub mod params;
+pub mod ring;
 
 use clack_extensions::{audio_ports::*, note_ports::*, params::*};
 use clack_plugin::events::event_types::ParamValueEvent;
 use clack_plugin::events::spaces::CoreEventSpace;
-use clack_plugin::events::Match;
+use clack_plugin::events::{Match, Pckn};
 use clack_plugin::prelude::*;
 use std::ffi::CStr;
 use std::fmt::Write as _;
-use std::ops::Bound;
+use std::ops::{Bound, Deref};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
 
 use params::ParamValues;
 use phydulcimer_core::engine::DulcimerEngine;
@@ -46,6 +49,7 @@ use phydulcimer_core::instrument::InstrumentConfig;
 use phydulcimer_core::layout::LayoutKind;
 use phydulcimer_core::room::{RoomParams, RoomSize};
 use phydulcimer_core::scaling::Temperament;
+use ring::NoteRing;
 
 /// CLAP プラグイン ID (逆ドメイン形式)。公開後は変更しないこと。
 pub const PLUGIN_ID: &str = "jp.ty17.phydulcimer";
@@ -149,7 +153,7 @@ impl DefaultPluginFactory for PhyDulcimerPlugin {
 
     fn new_shared(_host: HostSharedHandle) -> Result<PhyDulcimerShared, PluginError> {
         Ok(PhyDulcimerShared {
-            params: ParamValues::new(),
+            inner: Arc::new(SharedState::new()),
         })
     }
 
@@ -161,9 +165,72 @@ impl DefaultPluginFactory for PhyDulcimerPlugin {
     }
 }
 
-/// スレッド間で共有される状態。アトミックだけを持つ。
+/// スレッド間で共有される状態の実体。アトミックとロックフリーのリングだけ。
+///
+/// GUI (`egui-baseview`) のコールバックは `'static + Send` を要求するので、
+/// clack の Shared への参照をそのまま渡せない。`Arc` で包んだ実体をここに
+/// 置き、[`PhyDulcimerShared`] は薄い殻にする (PhyPiano と同じ形)。
+/// **GUI スレッドは DSP の状態に触らない** — 窓口はこの構造体だけ。
+pub struct SharedState {
+    pub(crate) params: ParamValues,
+    /// GUI の鍵盤クリック → オーディオへのノート
+    pub(crate) notes: NoteRing,
+    /// 鍵ごとの打鍵シリアル。オーディオが**実際に鳴らすときだけ**増やし、
+    /// GUI は毎フレーム差分を見てグローを起こす
+    pub(crate) strike_serials: [AtomicU32; 128],
+    /// エンジンに適用済みの配置 (0/1)。activate で書く。restart チップの根拠
+    pub(crate) active_layout: AtomicU32,
+    /// エンジンに適用済みの音律 (0/1)
+    pub(crate) active_temperament: AtomicU32,
+    /// GUI が動かしたパラメータのビットマスク (`PARAMS` の添字)。
+    /// process が排出してホストへ通知する
+    gui_edits: AtomicU32,
+    /// エディタが開いているか。開いている間は Sleep しない
+    /// (眠るとホストが process を止め、鍵盤クリックが排出されない)
+    pub(crate) editor_open: AtomicBool,
+}
+
+impl SharedState {
+    fn new() -> Self {
+        let params = ParamValues::new();
+        // active_* はパラメータ既定値と同じ符号化で初期化する
+        // (初回 activate が同じ値を書き直すので、開いた瞬間にチップが出ない)。
+        let layout = params.layout.load().round() as u32;
+        let temperament = params.temperament.load().round() as u32;
+        Self {
+            params,
+            notes: NoteRing::new(),
+            strike_serials: [const { AtomicU32::new(0) }; 128],
+            active_layout: AtomicU32::new(layout),
+            active_temperament: AtomicU32::new(temperament),
+            gui_edits: AtomicU32::new(0),
+            editor_open: AtomicBool::new(false),
+        }
+    }
+
+    /// GUI がパラメータを動かしたことを記録する (ビット = `PARAMS` の添字)。
+    pub(crate) fn mark_gui_edit(&self, id: u32) {
+        if let Some(bit) = params::PARAMS.iter().position(|p| p.id == id) {
+            self.gui_edits.fetch_or(1 << bit, Ordering::Release);
+        }
+    }
+
+    /// 溜まった GUI 変更を取り出してクリアする (process が呼ぶ)。
+    fn take_gui_edits(&self) -> u32 {
+        self.gui_edits.swap(0, Ordering::Acquire)
+    }
+}
+
+/// clack へ渡す Shared。実体 ([`SharedState`]) の薄い殻。
 pub struct PhyDulcimerShared {
-    params: ParamValues,
+    pub(crate) inner: Arc<SharedState>,
+}
+
+impl Deref for PhyDulcimerShared {
+    type Target = SharedState;
+    fn deref(&self) -> &SharedState {
+        &self.inner
+    }
 }
 
 impl PhyDulcimerShared {
@@ -175,6 +242,21 @@ impl PhyDulcimerShared {
 }
 
 impl PluginShared<'_> for PhyDulcimerShared {}
+
+/// 配置 → active_* の符号化 (GUI 側と同じ 0/1)。
+fn layout_code(layout: LayoutKind) -> u32 {
+    match layout {
+        LayoutKind::Diatonic1514 => 0,
+        LayoutKind::ChromaticE3E6 => 1,
+    }
+}
+
+fn temperament_code(temperament: Temperament) -> u32 {
+    match temperament {
+        Temperament::PureFifth => 0,
+        Temperament::Equal12 => 1,
+    }
+}
 
 pub struct PhyDulcimerMainThread<'a> {
     shared: &'a PhyDulcimerShared,
@@ -212,6 +294,13 @@ impl<'a> PluginAudioProcessor<'a, PhyDulcimerShared, PhyDulcimerMainThread<'a>>
         // (Phase 7)。以後の変更は request_restart → 次の activate で反映。
         let max_block = (audio_config.max_frames_count as usize).max(1);
         let config = config_from_params(&shared.params);
+        // 適用した構成を GUI へ公開する ("applies on restart" チップの根拠)。
+        shared
+            .active_layout
+            .store(layout_code(config.layout), Ordering::Relaxed);
+        shared
+            .active_temperament
+            .store(temperament_code(config.temperament), Ordering::Relaxed);
         Ok(Self {
             engine: DulcimerEngine::with_config(audio_config.sample_rate, max_block, config),
             shared,
@@ -229,6 +318,13 @@ impl<'a> PluginAudioProcessor<'a, PhyDulcimerShared, PhyDulcimerMainThread<'a>>
         mut audio: Audio,
         events: Events,
     ) -> Result<ProcessStatus, PluginError> {
+        // GUI 起源の変更をホストへ通知し (これが無いとオートメーションにも
+        // Undo にも乗らない)、鍵盤クリックのノートを排出する。
+        self.emit_gui_edits(events.output);
+        while let Some((key, velocity)) = self.shared.notes.pop() {
+            self.play_note(key, f64::from(velocity));
+        }
+
         let mut output_port = audio
             .output_port(0)
             .ok_or(PluginError::Message("No output port found"))?;
@@ -320,7 +416,11 @@ impl<'a> PluginAudioProcessor<'a, PhyDulcimerShared, PhyDulcimerMainThread<'a>>
         } else {
             self.silent_blocks = 0;
         }
-        if self.silent_blocks >= SILENT_BLOCKS_TO_SLEEP {
+        // エディタが開いている間は眠らない — 眠るとホストが process を止め、
+        // 鍵盤クリックのノートが排出されなくなる (コストは無音時 ~150 µs/block)。
+        if self.silent_blocks >= SILENT_BLOCKS_TO_SLEEP
+            && !self.shared.editor_open.load(Ordering::Relaxed)
+        {
             Ok(ProcessStatus::Sleep)
         } else {
             Ok(ProcessStatus::Continue)
@@ -345,7 +445,7 @@ impl PhyDulcimerAudioProcessor<'_> {
         match event.as_core_event() {
             Some(CoreEventSpace::NoteOn(event)) => {
                 if let Match::Specific(key) = event.key() {
-                    self.engine.note_on(key as u8, event.velocity());
+                    self.play_note(key as u8, event.velocity());
                 }
             }
             // **ノートオフは捨てる。** ダンパーが無い。`Instrument::note_off` を
@@ -384,6 +484,46 @@ impl PhyDulcimerAudioProcessor<'_> {
 }
 
 impl PhyDulcimerAudioProcessor<'_> {
+    /// 実際に鳴らす経路 (MIDI もエディタの鍵盤クリックも共通)。
+    ///
+    /// **鳴る鍵だけ**打鍵シリアルを進める — GUI の鍵盤はこれを見て光るので、
+    /// 未マップ鍵 (無音) が光ってはいけない。添字は `.get()` で防御する
+    /// (key は u16 由来のキャストで 128 以上になり得る)。
+    fn play_note(&mut self, key: u8, velocity: f64) {
+        if !self.engine.instrument().layout().is_mapped(key) {
+            return;
+        }
+        if let Some(serial) = self.shared.strike_serials.get(key as usize) {
+            serial.fetch_add(1, Ordering::Relaxed);
+        }
+        self.engine.note_on(key, velocity);
+    }
+
+    /// GUI が動かしたパラメータを出力イベントでホストへ知らせる。
+    ///
+    /// これが無いとホストは値が変わったことを知らない — オートメーションに
+    /// 乗らず、Undo も効かず、プロジェクトが「未変更」のままになる
+    /// (PhyPiano の同名実装の写し)。イベントキューが満杯なら諦めて捨てる
+    /// (値そのものはアトミックに入っており、次の変更でまた通知される)。
+    fn emit_gui_edits(&mut self, out: &mut OutputEvents) {
+        let mut edits = self.shared.take_gui_edits();
+        while edits != 0 {
+            let bit = edits.trailing_zeros() as usize;
+            edits &= edits - 1;
+            let Some(spec) = params::PARAMS.get(bit) else {
+                continue;
+            };
+            let Some(value) = self.shared.params.get(spec.id) else {
+                continue;
+            };
+            let Some(id) = ClapId::from_raw(spec.id) else {
+                continue;
+            };
+            let event = ParamValueEvent::new(0, id, Pckn::match_all(), value);
+            let _ = out.try_push(&event);
+        }
+    }
+
     /// Layout / Temperament が今のエンジンと食い違ったら、ホストへ一度だけ
     /// 再 activate を要求する (`clap_host.request_restart` — CLAP 仕様で
     /// どのスレッドからでも呼べる。確保なし)。
@@ -672,6 +812,44 @@ mod tests {
                 spec.id
             );
         }
+    }
+
+    #[test]
+    fn gui_edits_mark_the_right_bits_and_take_clears() {
+        let state = SharedState::new();
+        state.mark_gui_edit(params::id::LEVEL);
+        state.mark_gui_edit(params::id::MUTE);
+        let edits = state.take_gui_edits();
+        // ビット = PARAMS の添字。
+        let bit_of = |id: u32| params::PARAMS.iter().position(|p| p.id == id).unwrap();
+        assert_eq!(
+            edits,
+            (1 << bit_of(params::id::LEVEL)) | (1 << bit_of(params::id::MUTE))
+        );
+        assert_eq!(state.take_gui_edits(), 0, "take でクリアされる");
+        // 未知の ID は無視される。
+        state.mark_gui_edit(9999);
+        assert_eq!(state.take_gui_edits(), 0);
+    }
+
+    #[test]
+    fn active_codes_match_the_param_encoding() {
+        // GUI 側は「パラメータの丸め値 == active_*」でチップを判定するので、
+        // 符号化はパラメータの 0/1 とずれてはいけない。
+        assert_eq!(layout_code(LayoutKind::Diatonic1514), 0);
+        assert_eq!(layout_code(LayoutKind::ChromaticE3E6), 1);
+        assert_eq!(temperament_code(Temperament::PureFifth), 0);
+        assert_eq!(temperament_code(Temperament::Equal12), 1);
+        // 既定状態ではチップが出ない (active == パラメータ既定値)。
+        let state = SharedState::new();
+        assert_eq!(
+            state.active_layout.load(Ordering::Relaxed),
+            state.params.layout.load().round() as u32
+        );
+        assert_eq!(
+            state.active_temperament.load(Ordering::Relaxed),
+            state.params.temperament.load().round() as u32
+        );
     }
 
     #[test]

@@ -307,25 +307,8 @@ impl<H: EditorHost> Editor<H> {
             });
         });
 
-        let layout = if self.host.active_layout() >= 1 {
-            &self.layouts[1]
-        } else {
-            &self.layouts[0]
-        };
-        let glow_start = self.glow_start;
-        let glow = move |key: u8| -> f32 {
-            let start = glow_start[key as usize];
-            if start < 0.0 {
-                return 0.0;
-            }
-            let t = (now - start) / GLOW_SEC;
-            if t >= 1.0 {
-                0.0
-            } else {
-                (1.0 - t) as f32
-            }
-        };
-        let KeyboardResponse { pressed } = keyboard::keyboard(ui, layout, &glow);
+        let glow = |key: u8| self.glow_at(key, now);
+        let KeyboardResponse { pressed } = keyboard::keyboard(ui, self.active_layout(), &glow);
         if let Some((key, velocity)) = pressed {
             // 満杯 (false) は捨てる — クリック連打で詰まるほどのレートは出ない。
             let _ = self.host.note_on(key, velocity);
