@@ -432,6 +432,41 @@ pub fn find_partial(
     })
 }
 
+/// 部分音ベースのスペクトル重心 [Hz] (Phase 7 の打弦点指標)。
+///
+/// n = 1..`max_partials` の部分音を [`find_partial`] で走査し (インハーモニ
+/// シティに追随)、振幅加重平均 `Σ f_n·a_n / Σ a_n` を返す。
+///
+/// # なぜ FFT 全帯域の重心ではないか
+///
+/// 減衰音の全帯域重心は、音が減った後のノイズ床とデノーマル防止 DC に
+/// 引きずられて安定しない。この楽器の検証では f0 が既知 (鍵を選んで鳴らす)
+/// なので、実在する部分音だけを拾う部分音重心が頑健で、ノッチの検証と
+/// 同じ部分音表を共有できる。
+///
+/// 部分音が 1 本も見つからない場合は `None`。
+pub fn spectral_centroid_partials(
+    samples: &[f32],
+    sample_rate: f64,
+    f0_hz: f64,
+    max_partials: usize,
+) -> Option<f64> {
+    let mut num = 0.0f64;
+    let mut den = 0.0f64;
+    for n in 1..=max_partials {
+        let Some(p) = find_partial(samples, sample_rate, f0_hz, n, 200.0) else {
+            continue;
+        };
+        num += p.freq_hz * p.magnitude;
+        den += p.magnitude;
+    }
+    if den > 0.0 {
+        Some(num / den)
+    } else {
+        None
+    }
+}
+
 /// 実測した部分音の位置からインハーモニシティ係数 `B` を推定する。
 ///
 /// `f_n = n·f0·√(1+B·n²)` を `B` について解くと `B = ((f_n/(n·f0))² − 1)/n²`。
@@ -1186,6 +1221,43 @@ mod partial_search_tests {
     fn find_partial_refuses_frequencies_above_nyquist() {
         let x = inharmonic_tone(440.0, 0.0, 4, 4_800);
         assert!(find_partial(&x, SR, 440.0, 60, 150.0).is_none());
+    }
+
+    #[test]
+    fn centroid_of_two_known_partials_is_their_weighted_mean() {
+        // 440 Hz (振幅 1.0) + 880 Hz (振幅 0.5) → (440·1 + 880·0.5)/1.5 = 586.67 Hz。
+        let n = 48_000;
+        let mut x = vec![0.0f32; n];
+        for (f, a) in [(440.0, 1.0), (880.0, 0.5)] {
+            for (i, s) in x.iter_mut().enumerate() {
+                *s += (a * (std::f64::consts::TAU * f * i as f64 / SR).sin()) as f32;
+            }
+        }
+        let c = spectral_centroid_partials(&x, SR, 440.0, 8).expect("測れること");
+        assert_relative_eq!(c, 586.67, max_relative = 0.01);
+    }
+
+    #[test]
+    fn centroid_rises_when_high_partials_get_stronger() {
+        // 打弦点指標としての要件: 高次が増えれば重心は上がる。
+        let make = |high_amp: f64| -> Vec<f32> {
+            let n = 48_000;
+            let mut x = vec![0.0f32; n];
+            for (f, a) in [(220.0, 1.0), (1_760.0, high_amp)] {
+                for (i, s) in x.iter_mut().enumerate() {
+                    *s += (a * (std::f64::consts::TAU * f * i as f64 / SR).sin()) as f32;
+                }
+            }
+            x
+        };
+        let dark = spectral_centroid_partials(&make(0.1), SR, 220.0, 12).unwrap();
+        let bright = spectral_centroid_partials(&make(0.8), SR, 220.0, 12).unwrap();
+        assert!(bright > dark + 200.0, "dark {dark:.1} / bright {bright:.1}");
+    }
+
+    #[test]
+    fn centroid_is_none_on_silence() {
+        assert!(spectral_centroid_partials(&[0.0; 48_000], SR, 440.0, 8).is_none());
     }
 }
 

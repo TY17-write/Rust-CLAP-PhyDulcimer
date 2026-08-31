@@ -14,7 +14,7 @@ use std::process::ExitCode;
 use phydulcimer_analyze::{
     band_levels, estimate_fundamental, estimate_inharmonicity, estimate_partial_t60_with,
     estimate_t60, find_partial, goertzel_magnitude, loudness, modulation_depth, read_wav,
-    stereo_correlation, to_db, Wav,
+    spectral_centroid_partials, stereo_correlation, to_db, Wav,
 };
 
 const USAGE: &str = "\
@@ -47,6 +47,11 @@ OPTIONS:
     --correlation          L/R cross-correlation (stereo input only).
                            the peak must sit at lag 0 for X-Y; window with
                            --offset/--window to separate direct vs tail
+    --centroid             partial-based spectral centroid [Hz] (strike-point
+                           metric, Phase 7). scans partials of --f0ref (or the
+                           autocorrelation f0 when --f0ref is absent) with
+                           --count partials
+    --f0ref <HZ>           fundamental for --centroid                [default: auto]
     --lufs                 loudness per BS.1770-4 (momentary max + integrated).
                            measured on ALL channels as-is, independent of
                            --channel (mono-mixing first would read ~3 dB low).
@@ -83,6 +88,8 @@ struct Args {
     bands: bool,
     correlation: bool,
     lufs: bool,
+    centroid: bool,
+    f0ref: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +118,8 @@ impl Default for Args {
             bands: false,
             correlation: false,
             lufs: false,
+            centroid: false,
+            f0ref: None,
         }
     }
 }
@@ -173,6 +182,23 @@ fn run() -> Result<(), String> {
         println!("{:>10}  {:>8}", "center", "dB");
         for b in band_levels(&samples, sr) {
             println!("{:>10.1}  {:>8.2}", b.center_hz, b.level_db);
+        }
+    }
+
+    if args.centroid {
+        let f0 = match args.f0ref {
+            Some(f) => Some(f),
+            None => estimate_fundamental(&samples, sr, 20.0, 5_000.0),
+        };
+        match f0 {
+            Some(f0) => match spectral_centroid_partials(&samples, sr, f0, args.count) {
+                Some(c) => println!(
+                    "spectral centroid    {c:.1} Hz  (f0 = {f0:.2} Hz, {} partials scanned)",
+                    args.count
+                ),
+                None => println!("spectral centroid    —  (部分音が見つかりません)"),
+            },
+            None => println!("spectral centroid    —  (f0 を推定できません。--f0ref を指定)"),
         }
     }
 
@@ -366,6 +392,8 @@ fn parse_args(argv: Vec<String>) -> Result<Option<Args>, String> {
             "--bands" => args.bands = true,
             "--correlation" => args.correlation = true,
             "--lufs" => args.lufs = true,
+            "--centroid" => args.centroid = true,
+            "--f0ref" => args.f0ref = Some(parse_f64(&value()?, "--f0ref")?),
             other => return Err(format!("不明な引数: {other}")),
         }
     }
