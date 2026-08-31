@@ -9,6 +9,7 @@
 //!   FFT のビン間補間より直接的で誤差が小さい。
 //! - [`estimate_t60`] — 包絡の対数傾きから 60 dB 減衰時間。
 //! - [`estimate_fundamental`] — 自己相関による基本周波数。
+//! - [`loudness`] — BS.1770-4 のラウドネス (音域バランスの指標、Phase 10)。
 //!
 //! # 設計の要点
 //!
@@ -629,6 +630,186 @@ pub fn stereo_correlation(
     })
 }
 
+// ---------------------------------------------------------------------------
+// ラウドネス (ITU-R BS.1770-4)
+//
+// 音域バランス (Phase 10) の指標。ピーク dBFS は打撃スパイクに支配され、
+// バンドレベルは単音の「大きさ」を 1 つの数にしない。知覚的な音量の比較には
+// K 特性 + 400 ms ブロックのラウドネスを使う。
+// ---------------------------------------------------------------------------
+
+/// ラウドネス (BS.1770-4) の測定結果。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Loudness {
+    /// ゲート付き積分ラウドネス [LUFS]。全ブロックがゲートを下回ると −∞
+    pub integrated_lufs: f64,
+    /// モーメンタリ (400 ms ブロック) の最大値 [LUFS]。ゲートなし
+    pub momentary_max_lufs: f64,
+    /// 400 ms ブロック (75% オーバーラップ) の数
+    pub blocks: usize,
+}
+
+/// バイカッド 1 段 (係数は a0 = 1 に正規化済み、とは限らない — ITU の表の
+/// 2 段目は b が非正規化のまま定義されるので、係数をそのまま持つ)。
+#[derive(Debug, Clone, Copy)]
+struct Biquad {
+    b0: f64,
+    b1: f64,
+    b2: f64,
+    a1: f64,
+    a2: f64,
+}
+
+impl Biquad {
+    /// 転置直接形 II で in-place に処理する。状態は 0 から始める。
+    fn filter_in_place(&self, x: &mut [f64]) {
+        let (mut z1, mut z2) = (0.0f64, 0.0f64);
+        for v in x.iter_mut() {
+            let y = self.b0 * *v + z1;
+            z1 = self.b1 * *v - self.a1 * y + z2;
+            z2 = self.b2 * *v - self.a2 * y;
+            *v = y;
+        }
+    }
+}
+
+/// K 特性 1 段目: 頭部の音響効果を模す高域シェルフ (約 +4 dB)。
+///
+/// BS.1770 は 48 kHz の係数表しか与えないので、表を再現する設計パラメータ
+/// (De Man 2014) からどのサンプリング周波数でも解析的に導出する。
+/// **48 kHz で規格表と 1e-6 以内で一致すること**をテストで固定している。
+fn k_shelf(sample_rate: f64) -> Biquad {
+    let fc = 1_681.974_450_955_533;
+    let g_db = 3.999_843_853_973_347;
+    let q = 0.707_175_236_955_419_6;
+    let k = (std::f64::consts::PI * fc / sample_rate).tan();
+    let vh = 10.0f64.powf(g_db / 20.0);
+    let vb = vh.powf(0.499_666_774_155);
+    let a0 = 1.0 + k / q + k * k;
+    Biquad {
+        b0: (vh + vb * k / q + k * k) / a0,
+        b1: 2.0 * (k * k - vh) / a0,
+        b2: (vh - vb * k / q + k * k) / a0,
+        a1: 2.0 * (k * k - 1.0) / a0,
+        a2: (1.0 - k / q + k * k) / a0,
+    }
+}
+
+/// K 特性 2 段目: RLB ハイパス (低域の重み下げ)。
+///
+/// 規格表どおり b = [1, −2, 1] を非正規化のまま使う (DC ゲインは 0 のまま、
+/// 通過域ゲインがぴったり 1 になる形)。
+fn k_highpass(sample_rate: f64) -> Biquad {
+    let fc = 38.135_470_876_024_44;
+    let q = 0.500_327_037_323_877_3;
+    let k = (std::f64::consts::PI * fc / sample_rate).tan();
+    let a0 = 1.0 + k / q + k * k;
+    Biquad {
+        b0: 1.0,
+        b1: -2.0,
+        b2: 1.0,
+        a1: 2.0 * (k * k - 1.0) / a0,
+        a2: (1.0 - k / q + k * k) / a0,
+    }
+}
+
+/// ブロックパワー → LUFS。−0.691 は K 特性の 997 Hz でのゲインを打ち消す
+/// 規格の定数 (997 Hz フルスケール正弦 1ch がちょうど −3.01 LUFS になる)。
+fn power_to_lufs(power: f64) -> f64 {
+    if power > 0.0 {
+        -0.691 + 10.0 * power.log10()
+    } else {
+        f64::NEG_INFINITY
+    }
+}
+
+/// ラウドネス (BS.1770-4) を測る。
+///
+/// K 特性 (2 段バイカッド) → 400 ms ブロック (75% オーバーラップ) の平均二乗
+/// → チャンネル和 (重みは全チャンネル 1.0。L/R/C 相当。サラウンドの 1.41 は
+/// 扱わない)。積分値は −70 LUFS の絶対ゲート + −10 LU の相対ゲート付き。
+///
+/// # 単音の音域バランスにはモーメンタリ最大を使うこと
+///
+/// 単音は減衰音で、ゲート付き積分値は**レンダリング長と T60 に依存する**。
+/// この楽器はバスの基音 T60 = 12 s / トレブル 3 s なので、積分値は「どれだけ
+/// 長く鳴り続けるか」を測ってしまい、低音を実態より大きく読む。打撃音の
+/// 知覚的な大きさはアタック近傍の最も大きい 400 ms が支配するので、音域の
+/// 比較は [`Loudness::momentary_max_lufs`] で行い、条件 (長さ・速度・ROOM off)
+/// を固定して比べる。積分値は持続部の寄与の観察用。
+///
+/// 信号が 400 ms に満たない場合は `None`。無音は `Some` で −∞ を返す
+/// (「測れない」と「無音」を区別する)。
+pub fn loudness(channels: &[Vec<f32>], sample_rate: f64) -> Option<Loudness> {
+    if channels.is_empty() || sample_rate <= 0.0 {
+        return None;
+    }
+    let block = (sample_rate * 0.4).round() as usize;
+    let hop = (sample_rate * 0.1).round() as usize;
+    let frames = channels.iter().map(|c| c.len()).min().unwrap_or(0);
+    if block == 0 || hop == 0 || frames < block {
+        return None;
+    }
+
+    let shelf = k_shelf(sample_rate);
+    let hp = k_highpass(sample_rate);
+    let weighted: Vec<Vec<f64>> = channels
+        .iter()
+        .map(|c| {
+            let mut x: Vec<f64> = c[..frames].iter().map(|&v| v as f64).collect();
+            shelf.filter_in_place(&mut x);
+            hp.filter_in_place(&mut x);
+            x
+        })
+        .collect();
+
+    // ブロックごとの Σ_ch 平均二乗パワー。
+    let mut block_power = Vec::new();
+    let mut start = 0;
+    while start + block <= frames {
+        let mut p = 0.0;
+        for w in &weighted {
+            p += w[start..start + block].iter().map(|&v| v * v).sum::<f64>() / block as f64;
+        }
+        block_power.push(p);
+        start += hop;
+    }
+
+    let momentary_max_lufs = block_power
+        .iter()
+        .copied()
+        .fold(f64::NEG_INFINITY, |a, p| a.max(power_to_lufs(p)));
+
+    // 積分値: 絶対ゲート (−70 LUFS) → 相対ゲート (通過ブロック平均 −10 LU)。
+    let mean = |ps: &[f64]| ps.iter().sum::<f64>() / ps.len() as f64;
+    let above_abs: Vec<f64> = block_power
+        .iter()
+        .copied()
+        .filter(|&p| power_to_lufs(p) > -70.0)
+        .collect();
+    let integrated_lufs = if above_abs.is_empty() {
+        f64::NEG_INFINITY
+    } else {
+        let gamma_r = power_to_lufs(mean(&above_abs)) - 10.0;
+        let above_rel: Vec<f64> = above_abs
+            .iter()
+            .copied()
+            .filter(|&p| power_to_lufs(p) > gamma_r)
+            .collect();
+        if above_rel.is_empty() {
+            f64::NEG_INFINITY
+        } else {
+            power_to_lufs(mean(&above_rel))
+        }
+    };
+
+    Some(Loudness {
+        integrated_lufs,
+        momentary_max_lufs,
+        blocks: block_power.len(),
+    })
+}
+
 /// 2 つの窓の振幅比から T60 [s] を求める。
 ///
 /// 単一の指数減衰を仮定した粗い推定。ダブルデケイがあると意味を失うが、
@@ -794,6 +975,128 @@ pub fn write_wav(path: &Path, channels: &[Vec<f32>], sample_rate: f64) -> Result
 pub fn write_wav_mono(path: &Path, samples: &[f32], sample_rate: f64) -> Result<(), String> {
     let channels = vec![samples.to_vec()];
     write_wav(path, &channels, sample_rate)
+}
+
+#[cfg(test)]
+mod loudness_tests {
+    use super::*;
+    use approx::assert_relative_eq;
+
+    const SR: f64 = 48_000.0;
+
+    fn sine(freq: f64, amp: f64, n: usize) -> Vec<f32> {
+        (0..n)
+            .map(|i| (amp * (std::f64::consts::TAU * freq * i as f64 / SR).sin()) as f32)
+            .collect()
+    }
+
+    #[test]
+    fn k_weighting_matches_the_bs1770_table_at_48khz() {
+        // パラメトリック導出が規格の係数表 (BS.1770-4 Table 1/2) を再現すること。
+        // ここが崩れたら以降のラウドネス値はすべて疑わしい。
+        let s = k_shelf(SR);
+        assert_relative_eq!(s.b0, 1.535_124_859_586_97, epsilon = 1e-6);
+        assert_relative_eq!(s.b1, -2.691_696_189_406_38, epsilon = 1e-6);
+        assert_relative_eq!(s.b2, 1.198_392_810_852_85, epsilon = 1e-6);
+        assert_relative_eq!(s.a1, -1.690_659_293_182_41, epsilon = 1e-6);
+        assert_relative_eq!(s.a2, 0.732_480_774_215_85, epsilon = 1e-6);
+
+        let h = k_highpass(SR);
+        assert_relative_eq!(h.b0, 1.0, epsilon = 1e-9);
+        assert_relative_eq!(h.b1, -2.0, epsilon = 1e-9);
+        assert_relative_eq!(h.b2, 1.0, epsilon = 1e-9);
+        assert_relative_eq!(h.a1, -1.990_047_454_833_98, epsilon = 1e-6);
+        assert_relative_eq!(h.a2, 0.990_072_250_366_21, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn a_full_scale_997hz_sine_reads_the_reference_levels() {
+        // 規格の基準: 997 Hz フルスケール正弦を 1ch に入れると −3.01 LUFS。
+        // L = R のステレオでは +3.01 dB されて 0.0 LUFS。
+        let x = sine(997.0, 1.0, (SR * 2.0) as usize);
+
+        let mono = loudness(&[x.clone()], SR).expect("測れること");
+        assert_relative_eq!(mono.integrated_lufs, -3.01, epsilon = 0.05);
+        assert_relative_eq!(mono.momentary_max_lufs, -3.01, epsilon = 0.05);
+
+        let stereo = loudness(&[x.clone(), x.clone()], SR).expect("測れること");
+        assert_relative_eq!(stereo.integrated_lufs, 0.0, epsilon = 0.05);
+
+        // 片チャンネルだけなら 1ch と同じ (無音チャンネルは足しても変わらない)。
+        let silent = vec![0.0f32; x.len()];
+        let one_side = loudness(&[x, silent], SR).expect("測れること");
+        assert_relative_eq!(one_side.integrated_lufs, -3.01, epsilon = 0.05);
+    }
+
+    #[test]
+    fn loudness_scales_linearly_with_level() {
+        // −18 dBFS のステレオ正弦は −18 LUFS 付近。
+        let amp = 10.0f64.powf(-18.0 / 20.0);
+        let x = sine(997.0, amp, (SR * 2.0) as usize);
+        let l = loudness(&[x.clone(), x], SR).expect("測れること");
+        assert_relative_eq!(l.integrated_lufs, -18.0, epsilon = 0.05);
+    }
+
+    #[test]
+    fn the_absolute_gate_ignores_appended_silence() {
+        // 音 5 秒 + 無音 15 秒。ゲートが無ければ平均パワーは 6 dB 落ちるが、
+        // 無音ブロックは −70 LUFS の絶対ゲートで捨てられる。境界をまたぐ
+        // ブロック (部分的に音を含む) は相対ゲートを通るので厳密には不変に
+        // ならない — トーンを長くして寄与を薄め、0.3 LU 以内で見る。
+        let tone = sine(997.0, 0.5, (SR * 5.0) as usize);
+        let mut with_silence = tone.clone();
+        with_silence.extend(std::iter::repeat(0.0f32).take((SR * 15.0) as usize));
+
+        let short = loudness(&[tone], SR).expect("測れること");
+        let long = loudness(&[with_silence], SR).expect("測れること");
+        assert!(
+            (short.integrated_lufs - long.integrated_lufs).abs() < 0.3,
+            "無音の付加で積分値が動いた: {:.2} → {:.2}",
+            short.integrated_lufs,
+            long.integrated_lufs
+        );
+    }
+
+    #[test]
+    fn the_relative_gate_ignores_a_quiet_tail() {
+        // 音 2 秒 + −46 dB の尾 8 秒。尾は絶対ゲート (−70) は超えるが、
+        // 相対ゲート (−10 LU) で捨てられる。ゲートが無ければ −7 dB 以上動く。
+        let loud = sine(997.0, 1.0, (SR * 2.0) as usize);
+        let mut with_tail = loud.clone();
+        with_tail.extend(sine(997.0, 0.005, (SR * 8.0) as usize));
+
+        let short = loudness(&[loud], SR).expect("測れること");
+        let long = loudness(&[with_tail], SR).expect("測れること");
+        assert!(
+            (short.integrated_lufs - long.integrated_lufs).abs() < 0.5,
+            "小音量の尾で積分値が動いた: {:.2} → {:.2}",
+            short.integrated_lufs,
+            long.integrated_lufs
+        );
+    }
+
+    #[test]
+    fn momentary_max_is_untouched_by_appended_silence() {
+        // 減衰音の比較にモーメンタリ最大を使う根拠: 後ろに何を足しても不変。
+        let tone = sine(997.0, 0.7, SR as usize);
+        let mut with_silence = tone.clone();
+        with_silence.extend(std::iter::repeat(0.0f32).take((SR * 5.0) as usize));
+
+        let a = loudness(&[tone], SR).unwrap().momentary_max_lufs;
+        let b = loudness(&[with_silence], SR).unwrap().momentary_max_lufs;
+        assert_relative_eq!(a, b, epsilon = 1e-9);
+    }
+
+    #[test]
+    fn loudness_is_safe_on_degenerate_input() {
+        // 400 ms 未満は「測れない」。
+        assert!(loudness(&[vec![0.5f32; 100]], SR).is_none());
+        assert!(loudness(&[], SR).is_none());
+        // 無音は「測れた上で −∞」(「測れない」と区別する)。
+        let l = loudness(&[vec![0.0f32; SR as usize]], SR).expect("測れること");
+        assert!(l.integrated_lufs.is_infinite());
+        assert!(l.momentary_max_lufs.is_infinite());
+    }
 }
 
 #[cfg(test)]

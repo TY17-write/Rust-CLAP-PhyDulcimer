@@ -37,6 +37,10 @@ INSTRUMENT (--instrument):
     --raw                  bypass soundboard+cabinet, output bridge force (A/B)
     --no-room              bypass the X-Y room (measure with this; the room
                            hides flaws in the instrument model)
+    --sweep                render EVERY mapped key (G2..D6) one file each,
+                           key-<midi>.wav next to --out. ignores --key.
+                           standard register-balance condition (Phase 10):
+                             --sweep --dur 3.0 --vel 1.0 --no-room
 
     --soundboard           render the soundboard+cabinet impulse response
 
@@ -120,6 +124,7 @@ struct Args {
     no_coupling: bool,
     raw: bool,
     no_room: bool,
+    sweep: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -171,6 +176,7 @@ impl Default for Args {
             no_coupling: false,
             raw: false,
             no_room: false,
+            sweep: false,
         }
     }
 }
@@ -198,6 +204,10 @@ fn run() -> Result<(), String> {
     if args.mode == Mode::DesignTable {
         print_design_table(args.sample_rate);
         return Ok(());
+    }
+
+    if args.mode == Mode::Instrument && args.sweep {
+        return run_sweep(&args);
     }
 
     let (channels, note) = match args.mode {
@@ -337,6 +347,54 @@ fn render_string(args: &Args) -> Result<(Vec<Sample>, String), String> {
     );
 
     Ok((buf, note))
+}
+
+/// 全鍵掃引 — マップ済みの各鍵を 1 鍵 1 ファイルでレンダリングする (Phase 10)。
+///
+/// 鍵ごとに新しいエンジンを作る (前の鍵の共鳴が混ざると音域比較にならない)。
+/// 正規化はしない: 掃引の目的は鍵間のレベル比較そのものなので、`--peak` の
+/// 指定はエラーにする。
+fn run_sweep(args: &Args) -> Result<(), String> {
+    use phydulcimer_core::instrument::{KEY_MAX, KEY_MIN};
+    use phydulcimer_core::layout::Layout;
+
+    if !args.keys.is_empty() {
+        return Err("--sweep は --key と併用できません (全鍵を鳴らします)".into());
+    }
+    if args.peak > 0.0 {
+        return Err("--sweep と --peak は併用できません (鍵間のレベル比較が目的)".into());
+    }
+
+    let dir = args.out.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let layout = Layout::standard_15_14();
+    let mut count = 0;
+    for key in KEY_MIN..=KEY_MAX {
+        if layout.preferred_index(key).is_none() {
+            continue;
+        }
+        let sub = Args {
+            keys: vec![key],
+            sweep: false,
+            out: dir.join(format!("key-{key}.wav")),
+            ..args.clone()
+        };
+        let (channels, _) = render_instrument(&sub)?;
+        write_wav(&sub.out, &channels, sub.sample_rate)?;
+        count += 1;
+    }
+    println!(
+        "wrote {count} keys to {} (dur {:.1} s, vel {:.2}, room {}, output {})",
+        dir.display(),
+        args.dur,
+        args.vel.clamp(0.0, 1.0),
+        if args.no_room { "OFF" } else { "on (X-Y)" },
+        if args.raw {
+            "RAW"
+        } else {
+            "soundboard+cabinet"
+        },
+    );
+    Ok(())
 }
 
 /// 楽器全体を鳴らす (Phase 5 からはエンジン経由のステレオ)。
@@ -623,6 +681,7 @@ fn parse_args(argv: Vec<String>) -> Result<Option<Args>, String> {
                     .map_err(|_| "--key は 0–127 です".to_string())?,
             ),
             "--no-coupling" => args.no_coupling = true,
+            "--sweep" => args.sweep = true,
             "--raw" => args.raw = true,
             "--no-room" => args.no_room = true,
             "--soundboard" => args.mode = Mode::Soundboard,

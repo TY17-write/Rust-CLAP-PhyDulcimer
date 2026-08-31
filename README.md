@@ -36,9 +36,9 @@ Rust で書くハンマーダルシマー物理モデリング音源 (CLAP プ�
 | 7 | 演奏表現 (打弦点・ハンマー面・ミュート) | 未着手 |
 | 8 | 最適化 (SIMD) | 未着手 |
 | 9 | GUI とプリセット | 未着手 |
-| 10 | 音色の追い込み | 未着手 |
+| 10 | 音色の追い込み | 前半のみ完了 (音域バランスの LUFS 校正) |
 
-テスト 183 件、`cargo clippy` / `cargo fmt` ともにクリーン。
+テスト 194 件、`cargo clippy` / `cargo fmt` ともにクリーン。
 全体計画とフェーズ構成は [`docs/plan.html`](docs/plan.html)。
 
 ## ビルド
@@ -162,7 +162,9 @@ cargo run --release -p phydulcimer-render -- --contact-table --os 64
   未実装 ([D-018](docs/problems.md))
 - 響板は板のシミュレーションではなくフィルタ近似で、箱と合わせてパラメータは
   校正値。打撃過渡が支配的な音になる ([D-020](docs/problems.md))
-- 音域バランス・音色の追い込みは未着手 (Phase 10)
+- 音域バランスは校正済み: 全 27 鍵の LUFS モーメンタリ最大が
+  `LUFS(A4) + 1.0 LU/oct` の直線 ±2.0 LU ([D-021](docs/problems.md))。
+  音色の追い込み (Phase 10 後半) は未着手
 
 解消済みの問題も含め、全記録は [`docs/problems.md`](docs/problems.md) (D-001〜)。
 

@@ -56,11 +56,15 @@ fn hammer_speed(velocity: f64) -> f64 {
 /// バスの 1 コース = 弦 2 本 (発音区間のみ。短い側は見送り、D-018)。
 struct BassCourse {
     strings: [Segment; STRINGS_PER_COURSE],
+    /// 音域バランスの出力ゲイン ([`crate::scaling::course_gain`]、構築時に確定)
+    gain: Sample,
 }
 
 /// トレブルの 1 コース = 弦 2 本、各弦が右・左の 2 区間を持つ。
 struct TrebleCourse {
     strings: [TrebleString; STRINGS_PER_COURSE],
+    /// 音域バランスの出力ゲイン (右区間の f0 で引く。左区間も同じ弦なので共通)
+    gain: Sample,
 }
 
 /// 全弦バンク。
@@ -92,7 +96,8 @@ impl Instrument {
                     seg.set_damping(damping);
                     seg
                 });
-                BassCourse { strings }
+                let gain = crate::scaling::course_gain(base.f0_hz) as Sample;
+                BassCourse { strings, gain }
             })
             .collect();
 
@@ -111,7 +116,8 @@ impl Instrument {
                     let c = if i == 0 { 0.0 } else { cents };
                     TrebleString::new(detuned(right, c), detuned(left, c), damping, sample_rate)
                 });
-                TrebleCourse { strings }
+                let gain = crate::scaling::course_gain(right.f0_hz) as Sample;
+                TrebleCourse { strings, gain }
             })
             .collect();
 
@@ -233,17 +239,21 @@ impl Instrument {
         out.fill(0.0);
         // 弦ごとにブロックを回す (係数と状態がキャッシュに乗ったまま使える)。
         // トレブルの右左の結合は TrebleString の中でサンプル単位に閉じている。
+        // コースゲイン (音域バランス) は出力の加算時にだけ掛ける — 励振・結合・
+        // 減衰の物理はゲインの外に置く。
         for c in &mut self.bass {
+            let gain = c.gain;
             for seg in &mut c.strings {
                 for s in out.iter_mut() {
-                    *s += seg.process_sample();
+                    *s += gain * seg.process_sample();
                 }
             }
         }
         for c in &mut self.treble {
+            let gain = c.gain;
             for string in &mut c.strings {
                 for s in out.iter_mut() {
-                    *s += string.process_sample();
+                    *s += gain * string.process_sample();
                 }
             }
         }
@@ -263,16 +273,18 @@ impl Instrument {
         treble_out.fill(0.0);
 
         for c in &mut self.bass {
+            let gain = c.gain;
             for seg in &mut c.strings {
                 for s in bass_out.iter_mut() {
-                    *s += seg.process_sample();
+                    *s += gain * seg.process_sample();
                 }
             }
         }
         for c in &mut self.treble {
+            let gain = c.gain;
             for string in &mut c.strings {
                 for s in treble_out.iter_mut() {
-                    *s += string.process_sample();
+                    *s += gain * string.process_sample();
                 }
             }
         }

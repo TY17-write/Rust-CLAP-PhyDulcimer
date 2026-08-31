@@ -13,8 +13,8 @@ use std::process::ExitCode;
 
 use phydulcimer_analyze::{
     band_levels, estimate_fundamental, estimate_inharmonicity, estimate_partial_t60_with,
-    estimate_t60, find_partial, goertzel_magnitude, modulation_depth, read_wav, stereo_correlation,
-    to_db, Wav,
+    estimate_t60, find_partial, goertzel_magnitude, loudness, modulation_depth, read_wav,
+    stereo_correlation, to_db, Wav,
 };
 
 const USAGE: &str = "\
@@ -47,6 +47,11 @@ OPTIONS:
     --correlation          L/R cross-correlation (stereo input only).
                            the peak must sit at lag 0 for X-Y; window with
                            --offset/--window to separate direct vs tail
+    --lufs                 loudness per BS.1770-4 (momentary max + integrated).
+                           measured on ALL channels as-is, independent of
+                           --channel (mono-mixing first would read ~3 dB low).
+                           for single decaying notes compare the MOMENTARY MAX
+                           (integrated depends on render length and T60)
 
     -h, --help             show this help
 
@@ -77,6 +82,7 @@ struct Args {
     modulation: bool,
     bands: bool,
     correlation: bool,
+    lufs: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +110,7 @@ impl Default for Args {
             modulation: false,
             bands: false,
             correlation: false,
+            lufs: false,
         }
     }
 }
@@ -166,6 +173,26 @@ fn run() -> Result<(), String> {
         println!("{:>10}  {:>8}", "center", "dB");
         for b in band_levels(&samples, sr) {
             println!("{:>10.1}  {:>8.2}", b.center_hz, b.level_db);
+        }
+    }
+
+    if args.lufs {
+        // K 特性は全チャンネル和で定義されるので --channel とは独立に、
+        // WAV のチャンネルをそのまま使う (モノ平均を先に取ると約 3 dB 低く出る)。
+        let channels: Vec<Vec<f32>> = wav
+            .channels
+            .iter()
+            .map(|c| slice_window(c, sr, args.offset, args.window))
+            .collect::<Result<_, _>>()?;
+        match loudness(&channels, sr) {
+            Some(l) => {
+                println!(
+                    "loudness (BS.1770)   momentary max: {:>7.2} LUFS   integrated: {:>7.2} LUFS   ({} blocks)",
+                    l.momentary_max_lufs, l.integrated_lufs, l.blocks
+                );
+                println!("                     (single notes: compare the momentary max)");
+            }
+            None => println!("loudness (BS.1770)   —  (400 ms 未満は測れません)"),
         }
     }
 
@@ -338,6 +365,7 @@ fn parse_args(argv: Vec<String>) -> Result<Option<Args>, String> {
             "--modulation" => args.modulation = true,
             "--bands" => args.bands = true,
             "--correlation" => args.correlation = true,
+            "--lufs" => args.lufs = true,
             other => return Err(format!("不明な引数: {other}")),
         }
     }

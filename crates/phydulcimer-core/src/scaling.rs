@@ -148,6 +148,61 @@ pub fn damping_for_course(course_f0_hz: f64) -> DampingParams {
     DampingParams::from_t60_anchors(course_f0_hz, t60_low, 5_000.0, T60_AT_5K_S)
 }
 
+/// 音域バランスの補償ゲイン [dB] のアンカー表 (Phase 10 前半)。
+///
+/// **物理定数ではなく校正値** (D-013 / D-020 と同じ流儀)。2026-08-31 の全鍵
+/// 掃引 (ff・3 s・ROOM off・LUFS モーメンタリ最大、広がり 18.3 LU) を、
+/// ターゲット直線 `LUFS(A4) + 1.0 LU/oct · log2(f0/440)` へ載せる逆カーブ。
+///
+/// 非単調なのはモデルの構造がそのまま出ているため:
+///
+/// - 110 / 196 Hz の浅い谷 — 箱 (cabinet) の双峰がその鍵だけ持ち上げている
+/// - 130–330 Hz の +6〜8 dB — 響板の傾き `(f/1000)^2.5` と放射効率が低音の
+///   基音を削っているぶんの戻し
+/// - 494 Hz 以上の −4〜−6 dB — ブリッジ出力重み `w_n = T·nπ/L` と
+///   励振側の `1/M_n` がどちらも短い弦 (高音) を優遇するぶんの抑え
+///
+/// 440 Hz は 0 dB に固定 (A4 の校正 `CALIBRATED_GAIN` を不動に保つ)。
+const COURSE_GAIN_ANCHORS_DB: &[(f64, f64)] = &[
+    (98.0, 2.0),
+    (110.0, 1.5),
+    (128.0, 6.5),
+    (165.0, 8.0),
+    (196.0, 5.2),
+    (220.0, 6.5),
+    (330.0, 6.0),
+    (370.0, 0.9),
+    (392.0, 2.5),
+    (440.0, 0.0),
+    (494.0, -4.2),
+    (587.0, -4.75),
+    (740.0, -4.55),
+    (784.0, -5.6),
+];
+
+/// コースの基音に応じた出力ゲイン (線形、音域バランス用)。
+///
+/// アンカー間は (log2 f, dB) 平面の折れ線、範囲外は端の値で一定。
+/// トレブルコースは**右区間の f0** で引くこと — 左区間は同じ弦で同時に
+/// 鳴るので、コースに 1 つのゲインしか持てない (左専用鍵 A5〜D6 も
+/// 右側 f0 のゲインを受ける。実測でこの折衷は ±1.5 LU に収まっている)。
+///
+/// 音色には触れない: 励振・結合・減衰はそのままで、ブリッジ出力の
+/// 振幅だけが変わる。
+pub fn course_gain(course_f0_hz: f64) -> f64 {
+    let anchors = COURSE_GAIN_ANCHORS_DB;
+    let f = course_f0_hz.clamp(anchors[0].0, anchors[anchors.len() - 1].0);
+    let db = anchors
+        .windows(2)
+        .find(|w| f <= w[1].0)
+        .map(|w| {
+            let t = (f / w[0].0).log2() / (w[1].0 / w[0].0).log2();
+            w[0].1 + t * (w[1].1 - w[0].1)
+        })
+        .unwrap_or(anchors[anchors.len() - 1].1);
+    10.0f64.powf(db / 20.0)
+}
+
 /// 1 つの発音位置の設計 (弦 + 減衰)。
 pub fn design_position(position: &Position) -> (StringDesign, DampingParams) {
     match position.side {
@@ -209,6 +264,30 @@ mod tests {
     use super::*;
     use crate::layout::{BridgeSide, Layout};
     use approx::assert_relative_eq;
+
+    #[test]
+    fn course_gain_is_unity_at_a4() {
+        // 440 Hz = 0 dB の固定。ここが動くと A4 の校正 (CALIBRATED_GAIN と
+        // a_ff_single_note_is_calibrated) が崩れる。
+        assert_relative_eq!(course_gain(440.0), 1.0, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn course_gain_follows_the_anchor_table() {
+        // アンカー点そのものは表の値、間は log2(f) の折れ線。
+        for &(f, db) in COURSE_GAIN_ANCHORS_DB {
+            assert_relative_eq!(20.0 * course_gain(f).log10(), db, epsilon = 1e-9);
+        }
+        // 128–165 Hz の中点 (log2 で) は 6.5 と 8.0 の中間。
+        let mid = (128.0f64 * 165.0).sqrt();
+        assert_relative_eq!(20.0 * course_gain(mid).log10(), 7.25, epsilon = 1e-9);
+    }
+
+    #[test]
+    fn course_gain_clamps_outside_the_anchor_range() {
+        assert_relative_eq!(course_gain(50.0), course_gain(98.0), epsilon = 1e-12);
+        assert_relative_eq!(course_gain(2_000.0), course_gain(784.0), epsilon = 1e-12);
+    }
 
     /// **P3 の完了条件**: 導いた設計が文献の範囲に入ること。
     /// 参照音源を持たないプロジェクトでは、これが唯一の外部基準になる。

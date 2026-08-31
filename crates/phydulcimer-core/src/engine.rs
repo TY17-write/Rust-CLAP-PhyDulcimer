@@ -32,8 +32,12 @@ use crate::Sample;
 /// 基準: ff 単音 (v=6 m/s) のピークが約 −9 dBFS、全 44 位置 ff がソフト
 /// クリップ後にフルスケール内。響板を通した実測で決めた (Phase 5)。
 /// 実測 (響板の傾き校正・箱の正規化後): ff 単音 A4 のエンジン出力ピークが
-/// 約 −10 dBFS になる値。最低音 G2 の ff は −19 dBFS 程度で音域差が残る
-/// (音域バランスは Phase 10)。
+/// 約 −10 dBFS になる値。
+///
+/// 音域バランス (Phase 10 前半) は `scaling::course_gain` が受け持つ
+/// (440 Hz で 1.0 なのでこの校正は不動)。補償後の実測: 全 27 鍵の LUFS
+/// モーメンタリ最大が `LUFS(A4) + 1.0 LU/oct` の直線 ±2.0 LU、単音 ff の
+/// ピークは −9〜−17 dBFS (`tests/register_balance.rs` で固定)。
 const CALIBRATED_GAIN: Sample = 5.5e-3;
 
 /// ソフトクリップ。

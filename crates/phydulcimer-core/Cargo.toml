@@ -14,6 +14,10 @@ wide.workspace = true
 [dev-dependencies]
 approx.workspace = true
 criterion.workspace = true
+# 音域バランスの回帰テスト (tests/register_balance.rs) が LUFS 測定に使う。
+# analyze → core の依存は無いので循環しない。測定器は BS.1770 の規格テストで
+# lib 側から固定されている (測定器の独立性は保ったまま実装を 1 つにする)。
+phydulcimer-analyze = { path = "../../tools/analyze" }
 
 [[bench]]
 name = "dsp"
