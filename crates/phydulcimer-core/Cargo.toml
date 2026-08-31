@@ -13,3 +13,8 @@ wide.workspace = true
 
 [dev-dependencies]
 approx.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "dsp"
+harness = false

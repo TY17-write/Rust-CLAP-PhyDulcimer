@@ -26,6 +26,7 @@ MODES:
     (default)              decaying sine, for checking the analysis path
     --string               render one string segment (Phase 1)
     --contact-table        print hammer contact times; writes no audio
+    --table                print the 15/14 design table (44 positions); no audio
 
 COMMON:
     --out <PATH>           write the WAV here      [required except --contact-table]
@@ -66,6 +67,8 @@ enum Mode {
     Sine,
     String,
     ContactTable,
+    /// 44 発音位置の設計表を出す。音は出ない。
+    DesignTable,
 }
 
 #[derive(Debug, Clone)]
@@ -165,11 +168,15 @@ fn run() -> Result<(), String> {
         print_contact_table(&args);
         return Ok(());
     }
+    if args.mode == Mode::DesignTable {
+        print_design_table(args.sample_rate);
+        return Ok(());
+    }
 
     let (buf, note) = match args.mode {
         Mode::Sine => (render_sine(&args)?, String::new()),
         Mode::String => render_string(&args)?,
-        Mode::ContactTable => unreachable!(),
+        Mode::ContactTable | Mode::DesignTable => unreachable!(),
     };
 
     let raw_peak = buf.iter().fold(0.0 as Sample, |a, &b| a.max(b.abs()));
@@ -292,6 +299,66 @@ fn render_string(args: &Args) -> Result<(Vec<Sample>, String), String> {
     );
 
     Ok((buf, note))
+}
+
+/// 15/14 の設計表 (44 発音位置)。P3 の完了条件の確認に使う。
+fn print_design_table(sample_rate: f64) {
+    use phydulcimer_core::layout::{note_name, BridgeSide, Layout};
+    use phydulcimer_core::scaling::{design_position, key_to_hz};
+
+    let layout = Layout::standard_15_14();
+    println!(
+        "15/14 standard layout — {} speaking positions @ {} Hz",
+        layout.positions().len(),
+        sample_rate
+    );
+    println!(
+        "{:<7} {:<3} {:<5} {:>4} {:>9} {:>7} {:>7} {:>5} {:>7} {:>7} {:>9} {:>6} {:>8}",
+        "side",
+        "crs",
+        "note",
+        "midi",
+        "f0[Hz]",
+        "L[mm]",
+        "d[mm]",
+        "wrap",
+        "T[N]",
+        "s[MPa]",
+        "B",
+        "modes",
+        "T60f0[s]"
+    );
+
+    for p in layout.positions() {
+        let (design, damping) = design_position(p);
+        let params = design.segment_params();
+        let side = match p.side {
+            BridgeSide::Bass => "bass",
+            BridgeSide::TrebleRight => "treb-R",
+            BridgeSide::TrebleLeft => "treb-L",
+        };
+        // 左側は純正5度で 12 平均律から +2 cent。表では実周波数を出す。
+        let cents = 1200.0 * (design.f0_hz / key_to_hz(p.midi)).log2();
+        println!(
+            "{:<7} {:<3} {:<5} {:>4} {:>9.2} {:>7.1} {:>7.3} {:>5.2} {:>7.1} {:>7.0} {:>9.2e} {:>6} {:>8.2}{}",
+            side,
+            p.course,
+            note_name(p.midi),
+            p.midi,
+            design.f0_hz,
+            design.speaking_m * 1000.0,
+            design.diameter_m * 1000.0,
+            design.wrap,
+            params.tension(),
+            params.stress_pa() / 1e6,
+            params.inharmonicity(),
+            params.mode_count(sample_rate),
+            damping.t60_at(design.f0_hz),
+            if cents.abs() > 0.5 { format!("  ({cents:+.1}c)") } else { String::new() },
+        );
+    }
+    println!("\nwrap > 1 = wound string (mass multiplier on the steel core).");
+    println!("(+2.0c) = pure fifth from the 2:3 bridge, vs 12-TET (D-017).");
 }
 
 /// 撥を剛体壁に当てて接触時間を測る。弦は関与しない。
@@ -418,6 +485,7 @@ fn parse_args(argv: Vec<String>) -> Result<Option<Args>, String> {
         match flag.as_str() {
             "--string" => args.mode = Mode::String,
             "--contact-table" => args.mode = Mode::ContactTable,
+            "--table" => args.mode = Mode::DesignTable,
 
             "--out" => args.out = PathBuf::from(value()?),
             "--dur" => args.dur = parse_f64(&value()?, "--dur")?,
@@ -446,7 +514,8 @@ fn parse_args(argv: Vec<String>) -> Result<Option<Args>, String> {
         }
     }
 
-    if args.mode != Mode::ContactTable && args.out.as_os_str().is_empty() {
+    let needs_out = !matches!(args.mode, Mode::ContactTable | Mode::DesignTable);
+    if needs_out && args.out.as_os_str().is_empty() {
         return Err("--out は必須です (-h でヘルプ)".into());
     }
     Ok(Some(args))

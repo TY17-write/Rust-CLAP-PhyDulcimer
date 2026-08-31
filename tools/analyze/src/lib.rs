@@ -217,21 +217,46 @@ pub fn estimate_t60(samples: &[f32], sample_rate: f64) -> Option<T60Estimate> {
     fit_t60(&points, 35.0)
 }
 
-/// **1本の部分音**の減衰時間を推定する。
+/// **1本の部分音**の減衰時間を推定する (既定の窓 200 ms / ホップ 50 ms)。
 ///
-/// 短い窓ごとに Goertzel で `freq_hz` の振幅を測り、その対数傾きから T60 を出す。
-/// 部分音ごとに減衰時間が異なる打弦楽器では、これがモデルの減衰設計
-/// (`σ(f) = c1 + c3·f²`) を検証する唯一まともな方法になる。
+/// この既定は **T60 が約 0.5 秒より短いと測れない** (`docs/problems.md` の D-001)。
+/// `fit_t60` はピークから −5 dB → −20 dB の区間 (時間にして T60/4) に最低 3 点を
+/// 要求するので、ホップ 50 ms では T60 < 0.6 s あたりから点が足りなくなる。
+/// 短い減衰は [`estimate_partial_t60_with`] で窓とホップを狭めて測ること。
+/// 目安は **ホップ ≤ T60/12**。
 pub fn estimate_partial_t60(
     samples: &[f32],
     sample_rate: f64,
     freq_hz: f64,
 ) -> Option<T60Estimate> {
-    // 窓 200 ms / ホップ 50 ms。窓は隣接部分音を分離できる程度に長く、
-    // ホップは減衰を追える程度に細かく。
-    let window = (sample_rate * 0.2) as usize;
-    let hop = (sample_rate * 0.05) as usize;
-    if window == 0 || hop == 0 || samples.len() < window * 2 {
+    estimate_partial_t60_with(samples, sample_rate, freq_hz, 0.2, 0.05)
+}
+
+/// 窓とホップを指定して部分音の減衰時間を推定する。
+///
+/// 短い窓ごとに Goertzel で `freq_hz` の振幅を測り、その対数傾きから T60 を出す。
+/// 部分音ごとに減衰時間が異なる打弦楽器では、これがモデルの減衰設計
+/// (`σ(f) = c1 + c3·f²`) を検証する唯一まともな方法になる。
+///
+/// # 窓とホップの選び方
+///
+/// - **窓** は隣接部分音を分離できる長さ (周波数分解能 ≈ 2/窓)。基音間隔が
+///   `f0` なら窓 ≥ 4/f0 程度
+/// - **ホップ** は減衰を追える細かさ。**T60/12 以下**にしないと当てはめの
+///   点数が足りず `None` になる
+///
+/// 短い窓は分解能が粗くなるので、両者はトレードオフ。高音の弦 (f0 が高く
+/// T60 が短い) では両方を小さくできるため、実用上は成立する。
+pub fn estimate_partial_t60_with(
+    samples: &[f32],
+    sample_rate: f64,
+    freq_hz: f64,
+    window_sec: f64,
+    hop_sec: f64,
+) -> Option<T60Estimate> {
+    let window = (sample_rate * window_sec) as usize;
+    let hop = (sample_rate * hop_sec) as usize;
+    if window < 16 || hop == 0 || samples.len() < window * 2 {
         return None;
     }
 
@@ -786,6 +811,37 @@ mod tests {
         assert_relative_eq!(low.t60_sec, 3.0, max_relative = 0.1);
         assert_relative_eq!(high.t60_sec, 1.0, max_relative = 0.1);
         assert!(low.r_squared > 0.98 && high.r_squared > 0.98);
+    }
+
+    #[test]
+    fn short_t60_is_measurable_with_a_narrow_window() {
+        // D-001 の解消の検証。既定 (窓 0.2 / ホップ 0.05) では測れない短い減衰を、
+        // 窓とホップを狭めれば測れること。高音の弦の T60 は 0.4 秒を切る。
+        for t60 in [0.375, 0.25, 0.15] {
+            let n = (SR * 1.5) as usize;
+            let decay = (-3.0 * std::f64::consts::LN_10 / (t60 * SR)).exp();
+            let mut amp = 1.0f64;
+            let x: Vec<f32> = (0..n)
+                .map(|i| {
+                    let s = amp * (std::f64::consts::TAU * 2_000.0 * i as f64 / SR).sin();
+                    amp *= decay;
+                    s as f32
+                })
+                .collect();
+
+            // 既定では測れない (これが D-001)。
+            if t60 < 0.4 {
+                assert!(
+                    estimate_partial_t60(&x, SR, 2_000.0).is_none(),
+                    "T60 {t60} s が既定の窓で測れてしまった (D-001 の前提が変わった)"
+                );
+            }
+            // ホップ ≤ T60/12 に狭めれば測れる。
+            let hop = t60 / 15.0;
+            let est = estimate_partial_t60_with(&x, SR, 2_000.0, hop * 3.0, hop)
+                .unwrap_or_else(|| panic!("T60 {t60} s が狭い窓でも測れない"));
+            assert_relative_eq!(est.t60_sec, t60, max_relative = 0.1);
+        }
     }
 
     #[test]

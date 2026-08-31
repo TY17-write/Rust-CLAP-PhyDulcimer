@@ -12,8 +12,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use phydulcimer_analyze::{
-    estimate_fundamental, estimate_inharmonicity, estimate_partial_t60, estimate_t60, find_partial,
-    goertzel_magnitude, read_wav, to_db, Wav,
+    estimate_fundamental, estimate_inharmonicity, estimate_partial_t60_with, estimate_t60,
+    find_partial, goertzel_magnitude, read_wav, to_db, Wav,
 };
 
 const USAGE: &str = "\
@@ -35,6 +35,8 @@ OPTIONS:
     --count <N>            how many partials                       [default: 16]
     --scan-cents <C>       how far above n*f0 to scan              [default: 200]
     --partial-t60          T60 of each partial (needs --partials)
+    --t60-window <SEC>     analysis window for --partial-t60       [default: 0.2]
+    --t60-hop <SEC>        hop for --partial-t60; use <= T60/12    [default: 0.05]
 
     -h, --help             show this help
 
@@ -60,6 +62,8 @@ struct Args {
     count: usize,
     scan_cents: f64,
     partial_t60: bool,
+    t60_window: f64,
+    t60_hop: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,6 +86,8 @@ impl Default for Args {
             count: 16,
             scan_cents: 200.0,
             partial_t60: false,
+            t60_window: 0.2,
+            t60_hop: 0.05,
         }
     }
 }
@@ -186,7 +192,7 @@ fn print_partials(args: &Args, samples: &[f32], sr: f64, f0: f64) {
         let db = to_db(p.magnitude);
 
         if args.partial_t60 {
-            match estimate_partial_t60(samples, sr, p.freq_hz) {
+            match estimate_partial_t60_with(samples, sr, p.freq_hz, args.t60_window, args.t60_hop) {
                 Some(e) => println!(
                     "{:>4}  {:>10.2}  {:>+7.1}  {:>8.2}  {:>8.3}  {:>7.4}",
                     p.n, p.freq_hz, p.cents, db, e.t60_sec, e.r_squared
@@ -268,6 +274,8 @@ fn parse_args(argv: Vec<String>) -> Result<Option<Args>, String> {
             "--count" => args.count = parse_usize(&value()?, "--count")?,
             "--scan-cents" => args.scan_cents = parse_f64(&value()?, "--scan-cents")?,
             "--partial-t60" => args.partial_t60 = true,
+            "--t60-window" => args.t60_window = parse_f64(&value()?, "--t60-window")?,
+            "--t60-hop" => args.t60_hop = parse_f64(&value()?, "--t60-hop")?,
             other => return Err(format!("不明な引数: {other}")),
         }
     }
