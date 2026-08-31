@@ -146,6 +146,15 @@ impl Instrument {
         self.strike_ratio = ratio.clamp(0.005, 0.5);
     }
 
+    /// 撥の面 (木 / レザー / フェルト) を切り替える。**次の打撃から効く**
+    /// (鳴っている音は変わらない — 奏者が撥を持ち替えるのと同じ)。
+    ///
+    /// 係数の再構築は打撃時に `strike_pair` が該当セグメントだけ行うので、
+    /// ここは値の保存のみ (確保なし、RT 可)。
+    pub fn set_hammer_face(&mut self, face: crate::hammer::HammerFace) {
+        self.hammer = HammerParams::for_face(face);
+    }
+
     /// ブリッジ結合の強さを変える (検証用)。0 で切断。
     pub fn set_bridge_coupling(&mut self, k: f64) {
         for course in &mut self.treble {
@@ -617,6 +626,34 @@ mod tests {
         let p = *inst.string_params(60).unwrap();
         let at = |n: usize| magnitude_at(&x, p.partial_hz(n));
         assert!(at(8) < at(7) * 0.02, "打弦点 1/8 のノッチが出ていない");
+    }
+
+    #[test]
+    fn hammer_face_changes_the_brightness_from_the_next_strike() {
+        // 面の序列 (接触時間 wood < leather < felt) は hammer.rs で固定済み。
+        // ここは配線の検証: セッター経由で音色が実際に変わること。
+        let brightness = |face: crate::hammer::HammerFace| -> f64 {
+            let mut inst = Instrument::new(SR);
+            inst.set_hammer_face(face);
+            inst.note_on(60, 0.8);
+            let x = render(&mut inst, 0.6);
+            // 生のブリッジ力は打撃スパイクが支配的 (クレスト 20–40 倍、D-013)
+            // なので、過渡を捨ててリンギング部の部分音で比べる。
+            let ring = &x[(SR * 0.1) as usize..];
+            let p = *inst.string_params(60).unwrap();
+            let high: f64 = (6..=14).map(|n| magnitude_at(ring, p.partial_hz(n))).sum();
+            let low: f64 = (1..=2).map(|n| magnitude_at(ring, p.partial_hz(n))).sum();
+            high / low
+        };
+        let wood = brightness(crate::hammer::HammerFace::Wood);
+        let felt = brightness(crate::hammer::HammerFace::Felt);
+        // 生ブリッジ力での比は実測 wood 0.41 / felt 0.21 程度 (響板を通すと
+        // 差はさらに開く — ABI テスト側で 1/2 以下を固定)。配線の検証なので
+        // 境界は緩めに取る。
+        assert!(
+            felt < wood * 0.7,
+            "フェルト面で暗くならない: wood {wood:.3} vs felt {felt:.3}"
+        );
     }
 
     /// P4 の完了条件: 長時間の連続演奏で発散しない。

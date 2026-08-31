@@ -41,6 +41,7 @@ use std::ops::Bound;
 
 use params::ParamValues;
 use phydulcimer_core::engine::DulcimerEngine;
+use phydulcimer_core::hammer::HammerFace;
 use phydulcimer_core::room::{RoomParams, RoomSize};
 
 /// CLAP プラグイン ID (逆ドメイン形式)。公開後は変更しないこと。
@@ -76,6 +77,21 @@ const CC_LEVEL: u8 = 7;
 ///
 /// 0 でブリッジ寄り (x/L = 0.03、明るい)、127 で中央寄り (0.30、丸い)。
 const CC_STRIKE: u8 = 74;
+
+/// MIDI CC 番号: Hammer Face (CC70 = Sound Variation の慣例に合わせる)。
+///
+/// 奏者は演奏中に撥を持ち替えるので、CC で切り替えられる価値がある。
+/// 0–42 = Wood / 43–84 = Leather / 85–127 = Felt の 3 分割。
+const CC_FACE: u8 = 70;
+
+/// パラメータ値 (0–2、丸め) → 撥の面。
+fn face_from_value(value: f32) -> HammerFace {
+    match value.round() as i32 {
+        1 => HammerFace::Leather,
+        2 => HammerFace::Felt,
+        _ => HammerFace::Wood,
+    }
+}
 
 pub struct PhyDulcimerPlugin;
 
@@ -209,6 +225,8 @@ impl<'a> PluginAudioProcessor<'a, PhyDulcimerShared, PhyDulcimerMainThread<'a>>
             let gain = self.shared.params.level.load();
             {
                 let p = &self.shared.params;
+                self.engine
+                    .set_hammer_face(face_from_value(p.hammer_face.load()));
                 self.engine.set_room_enabled(p.room.load() >= 0.5);
                 let size = match p.room_size.load().round() as i32 {
                     0 => RoomSize::Small,
@@ -308,10 +326,13 @@ impl PhyDulcimerAudioProcessor<'_> {
             },
             Some(CoreEventSpace::ParamValue(event)) => {
                 self.shared.handle_param_event(event);
-                // 打弦点は即座に楽器へ同期する (ただの store で、係数の再構築は
-                // 次の打撃まで起きない)。同じブロックの後続の打鍵に効かせるため。
+                // 打弦点と撥の面は即座に楽器へ同期する (どちらもただの store で、
+                // 係数の再構築は次の打撃まで起きない)。同じブロックの後続の
+                // 打鍵に効かせるため (D-015 の教訓)。
                 self.engine
                     .set_strike_ratio(self.shared.params.strike_position.load() as f64);
+                self.engine
+                    .set_hammer_face(face_from_value(self.shared.params.hammer_face.load()));
             }
             // ミュート CC (手のひら) は Phase 7 でここに入る。
             Some(CoreEventSpace::Midi(event)) => {
@@ -344,6 +365,12 @@ impl PhyDulcimerAudioProcessor<'_> {
                     params.set(params::id::STRIKE_POSITION, value);
                     self.engine.set_strike_ratio(value);
                 }
+            }
+            CC_FACE => {
+                // 0–42 / 43–84 / 85–127 の 3 分割 (境界はパラメータの丸めと同じ)。
+                let value = (amount * 2.0).round();
+                params.set(params::id::HAMMER_FACE, value);
+                self.engine.set_hammer_face(face_from_value(value as f32));
             }
             _ => {}
         }
@@ -467,6 +494,14 @@ impl PluginMainThreadParams for PhyDulcimerMainThread<'_> {
             };
             return write!(writer, "{name}");
         }
+        if id == params::id::HAMMER_FACE {
+            let name = match value.round() as i32 {
+                1 => "Leather",
+                2 => "Felt",
+                _ => "Wood",
+            };
+            return write!(writer, "{name}");
+        }
         write!(writer, "{:.*}{}", spec.decimals, value, spec.unit)
     }
 
@@ -487,6 +522,14 @@ impl PluginMainThreadParams for PhyDulcimerMainThread<'_> {
                 "small" | "s" | "0" => Some(0.0),
                 "medium" | "m" | "1" => Some(1.0),
                 "large" | "l" | "2" => Some(2.0),
+                _ => None,
+            };
+        }
+        if id == params::id::HAMMER_FACE {
+            return match text.to_ascii_lowercase().as_str() {
+                "wood" | "w" | "0" => Some(0.0),
+                "leather" | "l" | "1" => Some(1.0),
+                "felt" | "f" | "2" => Some(2.0),
                 _ => None,
             };
         }

@@ -574,6 +574,31 @@ fn strike_position_parameter_moves_the_notch() {
 }
 
 #[test]
+fn hammer_face_parameter_darkens_the_tone() {
+    // Phase 7: 撥の面。フェルト (2) は木 (0) より接触が長く、高次が出ない。
+    let brightness_with_face = |face: f64| {
+        let mut rig = Rig::new();
+        let (left, _) = rig.render(80, move |b, ev| {
+            if b == 0 {
+                push_param(ev, plugin_params::id::HAMMER_FACE, face);
+                push_note_on(ev, 0, 60, 0.8);
+            }
+        });
+        let f0 = 261.63;
+        let window = &left[BLOCK * 8..BLOCK * 72];
+        let low: f64 = (1..=2).map(|n| magnitude_at(window, f0 * n as f64)).sum();
+        let high: f64 = (6..=14).map(|n| magnitude_at(window, f0 * n as f64)).sum();
+        high / low
+    };
+    let wood = brightness_with_face(0.0);
+    let felt = brightness_with_face(2.0);
+    assert!(
+        felt < wood * 0.5,
+        "Hammer Face が効いていない: wood {wood:.3} vs felt {felt:.3}"
+    );
+}
+
+#[test]
 fn level_parameter_scales_the_output() {
     let level_of = |value: f64| {
         let mut rig = Rig::new();

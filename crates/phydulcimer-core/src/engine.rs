@@ -102,6 +102,11 @@ impl DulcimerEngine {
         self.instrument.set_strike_ratio(ratio);
     }
 
+    /// 撥の面を切り替える。次の打撃から効く。
+    pub fn set_hammer_face(&mut self, face: crate::hammer::HammerFace) {
+        self.instrument.set_hammer_face(face);
+    }
+
     pub fn set_bridge_coupling(&mut self, k: f64) {
         self.instrument.set_bridge_coupling(k);
     }

@@ -20,6 +20,7 @@ pub mod id {
     pub const XY_ANGLE: u32 = 5;
     pub const ROOM_SIZE: u32 = 6;
     pub const ABSORPTION: u32 = 7;
+    pub const HAMMER_FACE: u32 = 8;
 }
 
 /// 1つのパラメータの仕様。
@@ -108,6 +109,17 @@ pub const PARAMS: &[ParamSpec] = &[
         unit: "",
         decimals: 2,
     },
+    ParamSpec {
+        id: id::HAMMER_FACE,
+        // 0 = Wood, 1 = Leather, 2 = Felt (Phase 7)。実機の撥は裏表で面が
+        // 違い、奏者が持ち替える。次の打撃から効く。
+        name: b"Hammer Face",
+        min: 0.0,
+        max: 2.0,
+        default: 0.0,
+        unit: "",
+        decimals: 0,
+    },
 ];
 
 /// `id` に対応する仕様を返す。
@@ -145,6 +157,7 @@ pub struct ParamValues {
     pub xy_angle: AtomicF32,
     pub room_size: AtomicF32,
     pub absorption: AtomicF32,
+    pub hammer_face: AtomicF32,
 }
 
 impl Default for ParamValues {
@@ -164,6 +177,7 @@ impl ParamValues {
             xy_angle: AtomicF32::new(default_of(id::XY_ANGLE)),
             room_size: AtomicF32::new(default_of(id::ROOM_SIZE)),
             absorption: AtomicF32::new(default_of(id::ABSORPTION)),
+            hammer_face: AtomicF32::new(default_of(id::HAMMER_FACE)),
         }
     }
 
@@ -179,6 +193,7 @@ impl ParamValues {
             id::XY_ANGLE => self.xy_angle.store(v),
             id::ROOM_SIZE => self.room_size.store(v),
             id::ABSORPTION => self.absorption.store(v),
+            id::HAMMER_FACE => self.hammer_face.store(v),
             _ => {}
         }
     }
@@ -193,6 +208,7 @@ impl ParamValues {
             id::XY_ANGLE => self.xy_angle.load() as f64,
             id::ROOM_SIZE => self.room_size.load() as f64,
             id::ABSORPTION => self.absorption.load() as f64,
+            id::HAMMER_FACE => self.hammer_face.load() as f64,
             _ => return None,
         })
     }
