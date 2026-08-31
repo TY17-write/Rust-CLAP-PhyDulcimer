@@ -55,8 +55,8 @@ pub const PLUGIN_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// 「鳴っていない」と判定する出力ピークの閾値。
 ///
 /// **ボイス数では判定できない** — この楽器にはそもそもボイスが無く、全弦が
-/// 常時走っている。PhyPiano は「ボイス 0 で眠る」判定で残響を凍結させて
-/// ポップノイズを出した (P-035)。ここでは実際の出力レベルだけを見る。
+/// 常時走っている。「ボイス 0 で眠る」型の判定は、まだ鳴っている残響を凍結させて
+/// ポップノイズを出す。ここでは実際の出力レベルだけを見る。
 /// −120 dBFS を下回っていれば、状態が凍結しても聴こえない。
 const SILENCE_THRESHOLD: f32 = 1e-6;
 
@@ -259,7 +259,7 @@ impl<'a> PluginAudioProcessor<'a, PhyDulcimerShared, PhyDulcimerMainThread<'a>>
 
         // **出力が本当に消えたときだけ眠る。** ダンパーが無く T60 が 10 秒を
         // 超える楽器なので、鳴っている最中に眠るとホストが process を止め、
-        // 次の打鍵で凍結した響きが再開してポップノイズになる (PhyPiano P-035)。
+        // 次の打鍵で凍結した響きが再開してポップノイズになる。
         if block_peak < SILENCE_THRESHOLD && !self.engine.any_hammer_active() {
             self.silent_blocks = self.silent_blocks.saturating_add(1);
         } else {

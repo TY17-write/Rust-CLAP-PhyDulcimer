@@ -17,7 +17,7 @@
 //! ビルド済みの `.clap` を `dlopen` するとプロファイルや拡張子の違いでパス解決が
 //! 脆くなる。clack は [`PluginEntry::load_from_clack`] で **`clack_export_entry!` が
 //! 作るエントリを直接ホストへ渡せる**ので、ABI 経路はそのままにファイル探索だけを
-//! 省ける (PhyPiano で確立した方法)。
+//! 省ける。
 
 use assert_no_alloc::{assert_no_alloc, AllocDisabler};
 use clack_extensions::audio_ports::{AudioPortInfoBuffer, AudioPortType, PluginAudioPorts};
@@ -474,7 +474,7 @@ fn velocity_changes_the_level() {
 
 /// **この楽器の定義そのもの。** ノートオフで音が切れない。
 ///
-/// PhyPiano の同名テストは「離鍵後しばらくで止まる」を検証するが、
+/// ピアノなら「離鍵後しばらくで止まる」を検証するところだが、
 /// ダルシマーにはダンパーが無いので、ノートオフの前後で減衰の速さが
 /// 変わらないことを検証する。
 #[test]
@@ -716,7 +716,7 @@ fn processing_can_be_restarted() {
 /// ダンパーが無い楽器は T60 が 10 秒を超える。DAW のループ (数秒) で折り返す
 /// たびに前の周回の響きが残ると、周回ごとに音が積み上がっていく。ホストは
 /// 折り返しで `stop_processing` を呼ぶので、そこで全弦が止まることを検証する。
-/// PhyPiano の P-036 (ペダルの持ち越し) と同じ形の罠。
+/// 「CC 由来の状態がループを越えて残る」型の罠と同族。
 #[test]
 fn ringing_strings_do_not_survive_a_loop_restart() {
     let mut rig = Rig::new();

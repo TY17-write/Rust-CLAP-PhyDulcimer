@@ -174,8 +174,7 @@ impl DampingParams {
     /// 2 点の T60 から係数を解く。
     ///
     /// 減衰を「係数」ではなく**「この周波数で何秒鳴るか」**で指定できるようにする。
-    /// PhyPiano は響板で Q 指定から減衰時間指定へ変えて改善した経緯があるので、
-    /// こちらは最初から時間で持つ。
+    /// Q 指定は低域ほど長く鳴ってリバーブ化する罠があるので、最初から時間で持つ。
     pub fn from_t60_anchors(f_low: f64, t60_low: f64, f_high: f64, t60_high: f64) -> Self {
         let (s_low, s_high) = (decay_from_t60(t60_low), decay_from_t60(t60_high));
         let (fl2, fh2) = (f_low * f_low, f_high * f_high);
@@ -216,8 +215,7 @@ impl Default for DampingParams {
 /// **Phase 1 で測って決めた: 既定は [`Decimation::Drop`] で、フィルタは要らない。**
 /// 木の撥 (os=16) で両方式の部分音レベルは 0.01 dB まで一致し、部分音の無い
 /// 周波数のフロアはどちらも −129 dB 以下だった。共振器バンクの状態は狭帯域で、
-/// ナイキストより上のエネルギーをそもそも持たないため。PhyPiano で未測のまま
-/// 残った P-011 に、この楽器での答えを出した (→ D-010)。
+/// ナイキストより上のエネルギーをそもそも持たないため (→ D-010)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Decimation {
     /// 最後のサブサンプルだけを採る (フィルタなし)

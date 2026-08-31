@@ -69,9 +69,9 @@ STRING (--string):
     -h, --help             show this help
 
 NOTE:
-    --peak defaults to 0 (no normalisation). PhyPiano defaulted it to 0.9 and
-    every A/B comparison silently lost its level difference unless --peak 0 was
-    passed. Normalise only when the absolute level does not matter.
+    --peak defaults to 0 (no normalisation). A default of 0.9 silently equalises
+    the levels of any A/B pair and hides the difference being measured.
+    Normalise only when the absolute level does not matter.
 ";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
