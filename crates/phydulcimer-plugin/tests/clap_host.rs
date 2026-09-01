@@ -1034,9 +1034,9 @@ fn a_foreign_state_blob_is_rejected() {
         load_state(&mut rig, b"someotherplugin 1\nparam 1 0.5\n").is_err(),
         "他プラグインの状態を受け入れてしまった"
     );
-    // PhyPiano の状態も受け入れない (同じ形式の親戚だが別の楽器)。
+    // 同じ行ベース形式でも、先頭の目印が違えば受け入れない。
     assert!(
-        load_state(&mut rig, b"phypiano 1\nparam 1 0.5\n").is_err(),
-        "PhyPiano の状態を受け入れてしまった"
+        load_state(&mut rig, b"someothersynth 1\nparam 1 0.5\n").is_err(),
+        "別の目印の状態を受け入れてしまった"
     );
 }

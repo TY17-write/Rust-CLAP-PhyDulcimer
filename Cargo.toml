@@ -18,7 +18,7 @@ rust-version = "1.85"
 phydulcimer-core = { path = "crates/phydulcimer-core" }
 phydulcimer-gui = { path = "crates/phydulcimer-gui" }
 
-# GUI (Phase 9)。バージョンは PhyPiano で実機確認済みの組に揃える。
+# GUI (Phase 9)。バージョンは DAW 実機確認済みの組に固定する。
 # egui-baseview がウィンドウとイベントループ、egui が描画。
 # GUI の依存 (~130 crate) は gui / plugin クレートに閉じ込め、core には入れない。
 egui = "0.35"

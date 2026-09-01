@@ -436,16 +436,15 @@ pre i { color: var(--ink-faint); font-style: normal; }
 
 <p>
 手法の選定は <a href="research.md">研究ノート</a> に譲る。結論だけ書くと、
-打弦弦そのものの合成は隣の <code>Rust-CLAP-PhyPiano</code> と同じ<strong>モーダル合成 (並列2次共振器バンク)</strong> で、
-理由も同じ — 部分音の周波数を直接置けること。
-したがって <code>modal.rs</code> / <code>hammer.rs</code> / <code>soundboard.rs</code> と検証ツール一式は、そのまま資産になる。
+打弦弦そのものの合成は<strong>モーダル合成 (並列2次共振器バンク)</strong> —
+部分音の周波数を直接置けるので、設計則 (インハーモニシティ・T60) と検証 (部分音の実測) がそのまま繋がる。
 </p>
 
-<p><strong>本プロジェクトの中身は、ピアノと構造が違う 4 か所だけである。</strong>残りは移植と再校正になる。</p>
+<p><strong>本プロジェクトの中身は、ピアノ物理音源の定石と構造が違う 4 か所だけである。</strong>残りは定石の再校正になる。</p>
 
 <div class="tw">
 <table>
-  <thead><tr><th style="width:44%">ピアノ (PhyPiano)</th><th>ダルシマー (本プロジェクト)</th></tr></thead>
+  <thead><tr><th style="width:44%">ピアノ物理音源の定石</th><th>ダルシマー (本プロジェクト)</th></tr></thead>
   <tbody>
     <tr><td>ボイスプールから確保し、ノートオフでダンパーが止める</td><td><strong>ダンパーが無い。全弦を常時回す。</strong>打撃はボイスの確保ではなく力の注入</td></tr>
     <tr><td>1 本の弦 = 1 つの音高</td><td><strong>ブリッジが弦を 2:3 に分け、1 本が 2 つの音高を持つ</strong> (完全5度)</td></tr>
@@ -565,7 +564,7 @@ Peterson は、製作者がこの長すぎる減衰を短くするために
 <p>
 ピアノのフェルト (接触 0.5–4 ms、圧縮すると硬くなる強い非線形) とは別物で、ほぼ剛体接触に近く接触時間が桁で短い。
 接触時間が 0.1–0.3 ms なら 48 kHz で <strong>5–14 サンプル</strong>しかなく、
-PhyPiano の 4 倍オーバーサンプルでは足りない見込み。<strong>P1 で実測して決める。</strong>
+4 倍程度のオーバーサンプルでは足りない見込み。<strong>P1 で実測して決める。</strong>
 </p>
 
 <h3>楽器の諸元</h3>
@@ -690,7 +689,7 @@ PhyPiano の 4 倍オーバーサンプルでは足りない見込み。<strong>
 
 <p>
 結合はモーダル空間で<strong>ランク 1</strong> なので、各サンプルで「<code>v_b</code> を作る内積 (O(N))」→「<code>v_b</code> を配る外積 (O(N))」の 2 パスで済む。
-共感共鳴・縦振動と同じ構造で、PhyPiano で既に動いている形。
+ピアノ物理音源の共感共鳴・縦振動と同じランク 1 の構造で、実時間の実績がある形。
 </p>
 
 <p>
@@ -702,7 +701,7 @@ PhyPiano の 4 倍オーバーサンプルでは足りない見込み。<strong>
 <table>
   <thead><tr><th>段階</th><th>形</th><th>安定性</th></tr></thead>
   <tbody>
-    <tr><td class="num">A</td><td>打った区間 → 反対の区間への<strong>一方向</strong></td><td>無条件で安定 (PhyPiano の共感共鳴と同じ判断)</td></tr>
+    <tr><td class="num">A</td><td>打った区間 → 反対の区間への<strong>一方向</strong></td><td>無条件で安定 (閉ループを持たない)</td></tr>
     <tr><td class="num">B</td><td>ブリッジ点を共有する<strong>双方向</strong>。1×1 の陰的解</td><td>陰的に解けば安定。反復は要らない。要検証</td></tr>
   </tbody>
 </table>
@@ -710,7 +709,7 @@ PhyPiano の 4 倍オーバーサンプルでは足りない見込み。<strong>
 
 <p>
 <strong>段階 A で音として成立させてから B に進む。</strong>
-段階 B は PhyPiano が「やるとすれば弦のインピーダンスまで含めた双方向結合へ進むほうが筋が良い」と書いた、まさにその一歩。
+段階 B は弦のインピーダンスまで含めた真の双方向結合への一歩。
 ダルシマーではこれが楽器の本質なので避けて通れない。
 </p>
 
@@ -724,13 +723,13 @@ PhyPiano の 4 倍オーバーサンプルでは足りない見込み。<strong>
 
 <div class="note risk">
 <b>note_on のコストが増える。</b><code>sin</code> をモード数ぶん計算するので、低音の 128 モードで無視できない。
-PhyPiano の実測は低音 3.9 µs。着手時にベンチで測り、足りなければ位相の漸化式で 1 モードあたり乗算 2 回にする。
+参考実測では低音 (128 モード) で 3.9 µs。着手時にベンチで測り、足りなければ位相の漸化式で 1 モードあたり乗算 2 回にする。
 </div>
 
 <h3>響板・箱・弦の配置</h3>
 
 <ul>
-  <li>PhyPiano の <code>soundboard.rs</code> (並列2次バンク) を移植して再校正。<strong>ブリッジ 2 箇所で系統を分ける</strong> — PhyPiano のゾーン分割は分解能不足で負けたが、こちらは 2 箇所に物理的な根拠がある</li>
+  <li>響板は並列2次バンク (<code>soundboard.rs</code>) を再校正して使う。<strong>ブリッジ 2 箇所で系統を分ける</strong> — 響板のゾーン分割には 2 本のブリッジという物理的な根拠がある</li>
   <li><strong>ヘルムホルツ共鳴 + 板の最低次モードの 2 自由度結合</strong>を足す (音孔と箱)。Vongsawad らは音孔が放射音に強く効くことを示している</li>
   <li>弦ごとのブリッジ力ハイパスは移植する</li>
   <li>配置は <code>layout.rs</code> に表で持つ。既定は 15/14 の D/G 全音階。<strong>同じ音高が複数の場所に存在する</strong>ので MIDI からの割当は 1 対多</li>
@@ -872,7 +871,7 @@ FDN の出力を 2 つの異なる線形結合で取り出し、結合行列で�
 
 <div class="note risk">
 <b>部屋を入れると楽器のモデルの粗が隠れる。</b>
-PhyPiano では響板の残響 0.3 秒が「どんなに速く弦を止めても音はここまでしか速く消えない」という下限を作り、測定を頭打ちにした。
+響板の残響 0.3 秒でさえ「どんなに速く弦を止めても音はここまでしか速く消えない」という下限を作り、測定を頭打ちにする。
 ROOM はそれよりずっと長い。<b>P6 より前の音質判断・P10 の追い込みは、必ず ROOM を off にして行う。</b>
 </div>
 
@@ -887,7 +886,7 @@ ROOM はそれよりずっと長い。<b>P6 より前の音質判断・P10 の�
 
 <p>
 締切は 64 サンプル @ 48 kHz = <strong>1333 µs/block</strong>。
-PhyPiano の実測 (共感共鳴 1244 共振器で 26.9 µs) から単価を引くと <strong>0.34 ns / 共振器 / サンプル</strong> (SIMD 後)。
+SIMD 化した並列2次共振器バンクの実測ベンチ (1244 共振器で 26.9 µs) から単価を引くと <strong>0.34 ns / 共振器 / サンプル</strong>。
 15/14、コースあたり 2 本、モード上限 128 として:
 </p>
 
@@ -910,7 +909,7 @@ PhyPiano の実測 (共感共鳴 1244 共振器で 26.9 µs) から単価を引�
   <thead><tr><th>段</th><th>コスト / block</th><th>根拠</th></tr></thead>
   <tbody>
     <tr><td>弦バンク 6730 共振器</td><td class="num">147 µs</td><td>6730 × 64 × 0.34 ns</td></tr>
-    <tr><td>響板 480 モード × 2 系統</td><td class="num">12 µs</td><td>PhyPiano 実測 160 モードで 1.99 µs</td></tr>
+    <tr><td>響板 480 モード × 2 系統</td><td class="num">12 µs</td><td>実測 160 モードで 1.99 µs</td></tr>
     <tr><td>箱 (2 自由度)</td><td class="num">&lt; 1 µs</td><td>共振器 2 本</td></tr>
     <tr><td>ROOM</td><td class="num">3–5 µs</td><td>初期反射 20 タップ + FDN 8 ライン</td></tr>
     <tr><td><strong>合計 (最悪ケース)</strong></td><td class="num"><strong>約 165 µs → CPU 12.4%</strong></td><td>締切 1333 µs</td></tr>
@@ -919,12 +918,12 @@ PhyPiano の実測 (共感共鳴 1244 共振器で 26.9 µs) から単価を引�
 </div>
 
 <p>
-PhyPiano の 32 音同時 (183 µs, CPU 13.7%) とほぼ同じで、しかもこちらは<strong>全弦が鳴っている最悪ケース</strong>の値。
+モーダル方式のピアノ物理音源の多声時と同水準で、しかもこちらは<strong>全弦が鳴っている最悪ケース</strong>の値。
 音域が狭く弦が短いぶんモード数が少ないので、ピアノより有利になる。前提が 2 つある。
 </p>
 
 <ol>
-  <li><strong>モーダル共振器の SIMD 化 (PhyPiano Phase 7 の <code>f32x8</code>) を移植すること。</strong>スカラのままなら 5〜10 倍で締切に当たる</li>
+  <li><strong>モーダル共振器を SIMD 化 (<code>f32x8</code>) すること。</strong>スカラのままなら 5〜10 倍で締切に当たる</li>
   <li><strong>モード上限 128 が音色として足りること。</strong>打弦点がブリッジに近いので足りない可能性がある。足りなければ上限を上げるか、高域を残差合成に回す</li>
 </ol>
 </section>
@@ -936,7 +935,7 @@ PhyPiano の 32 音同時 (183 µs, CPU 13.7%) とほぼ同じで、しかもこ
 <pre>Rust-CLAP-PhyDulcimer/
 ├── Cargo.toml                 <i>workspace</i>
 ├── README.md                  <i>Opus 5 作成の明記と参照元リストを維持</i>
-├── CLAUDE.md                  <i>ファイル編集の鉄則 (PhyPiano から複製)</i>
+├── CLAUDE.md                  <i>ファイル編集の鉄則</i>
 ├── crates/
 │   ├── <b>phydulcimer-core/</b>      <i>DSP。forbid(unsafe_code)、アロケーション無し</i>
 │   │   └── src/
@@ -968,27 +967,6 @@ clack は <strong>revision <code>c5975f9</code> に固定</strong> (<code>trisph
 GUI は <code>egui</code> + <code>egui-baseview</code>、<strong>UI の文字は ASCII のみ</strong> (egui の既定フォントに日本語グリフが無い)。
 </p>
 
-<h3>PhyPiano から何を持ってくるか</h3>
-
-<p><strong>コピーする。パス依存にはしない。</strong>隣が別リポジトリで独立に動くため、参照すると両方が壊れる。重複は許容する。</p>
-
-<div class="tw">
-<table>
-  <thead><tr><th style="width:32%">ファイル</th><th>扱い</th></tr></thead>
-  <tbody>
-    <tr><td><code>modal.rs</code></td><td><strong>ほぼそのまま。</strong>最大の資産 (SIMD 済みの共振器バンク)</td></tr>
-    <tr><td><code>hammer.rs</code></td><td>移植 + 係数とオーバーサンプル倍率の変更</td></tr>
-    <tr><td><code>soundboard.rs</code></td><td>移植 + 全面再校正 + 2 系統化</td></tr>
-    <tr><td><code>reverb.rs</code></td><td><code>room.rs</code> の FDN の出発点にする。<strong>相関の設計を足す</strong></td></tr>
-    <tr><td><code>tools/render</code> <code>tools/analyze</code></td><td><strong>移植。</strong>測り方の資産がここに集まっている</td></tr>
-    <tr><td><code>scaling.rs</code></td><td>設計則の骨格だけ移植。アンカーは全部置き直す</td></tr>
-    <tr><td><code>string.rs</code></td><td>参考にするが書き直す (2 区間・可変打弦点・ダンパー無し)</td></tr>
-    <tr><td><code>engine.rs</code> <code>voice.rs</code></td><td><strong>捨てる。</strong>ボイスプールが無いので構造が違う</td></tr>
-    <tr><td><code>sympathetic.rs</code></td><td><strong>捨てる。</strong>全弦が本物なので不要</td></tr>
-    <tr><td><code>longitudinal.rs</code></td><td>当面見送り。弦が短く張力も低いので寄与は小さいと見込む</td></tr>
-  </tbody>
-</table>
-</div>
 </section>
 
 <!-- ============ 7 ============ -->
@@ -1143,7 +1121,7 @@ GUI は <code>egui</code> + <code>egui-baseview</code>、<strong>UI の文字は
   <div>
     <h3>最適化</h3>
     <ul>
-      <li><code>modal.rs</code> を <code>f32x8</code> に SIMD 化 (PhyPiano Phase 7 の移植)</li>
+      <li><code>modal.rs</code> を <code>f32x8</code> に SIMD 化</li>
       <li><code>active</code> 判定、<code>note_on</code> のコスト削減 (位相漸化式)</li>
     </ul>
     <div class="done"><h4>完了条件</h4><ul>
@@ -1166,11 +1144,11 @@ GUI は <code>egui</code> + <code>egui-baseview</code>、<strong>UI の文字は
     </ul>
     <div class="done"><h4>完了条件</h4><ul>
       <li><code>README.md</code> の実機確認チェックリストを DAW で通す</li>
-      <li>自動テストでは出ない不具合が必ずあると想定する (PhyPiano は 3 件出した)</li>
+      <li>自動テストでは出ない不具合が必ずあると想定する</li>
     </ul></div>
     <div class="done"><h4>実施済み (2026-09-01)</h4><ul>
       <li><strong>前半 (GUI)</strong> — egui エディタ。実機確認で D-028 (repaint 要求が無いと描画されない) を発見・修正</li>
-      <li><strong>後半 (state 拡張)</strong> — パラメータのプロジェクト / プリセットへの保存・復元 (PhyPiano の <code>state.rs</code> の複製、テキスト形式)。<strong>独自プリセットブラウザは作らない</strong> (ユーザー決定) — 保存先はホスト任せ。Layout/Temperament の復元は次の activate で反映</li>
+      <li><strong>後半 (state 拡張)</strong> — パラメータのプロジェクト / プリセットへの保存・復元 (行ベースのテキスト形式)。<strong>独自プリセットブラウザは作らない</strong> — 保存先はホスト任せ。Layout/Temperament の復元は次の activate で反映</li>
     </ul></div>
   </div>
 </div>
@@ -1180,8 +1158,8 @@ GUI は <code>egui</code> + <code>egui-baseview</code>、<strong>UI の文字は
   <div>
     <h3>音色の追い込み — 参照音源を持たない前提で</h3>
     <p>
-      PhyPiano は Phase 8 まで終えてから参照音源と並べ、<strong>Phase 9・10 を丸ごと追加することになった</strong>。
-      同じことが起きるので枠を置く。ただし本プロジェクトは参照を持たないので <code>--compare</code> が使えない。
+      物理音源は一通り鳴ってからの<strong>音色の追い込みに専用の枠が要る</strong> — ここを見込まない計画は必ず伸びる。
+      ただし本プロジェクトは参照音源を持たないので、「参照と並べて詰める」やり方が使えない。
       代わりに<strong>参照なしで測れる指標</strong>を先に用意する。
     </p>
     <div class="tw"><table>
@@ -1214,7 +1192,7 @@ GUI は <code>egui</code> + <code>egui-baseview</code>、<strong>UI の文字は
 <section id="s8">
 <h2><span class="n">08</span>検証方法</h2>
 
-<p>PhyPiano の「測って確かめる」をそのまま引き継ぐ。<strong>指標を先に作ってからモデルを触る。</strong></p>
+<p>方針は「測って確かめる」。<strong>指標を先に作ってからモデルを触る。</strong></p>
 
 <h4>単体テスト</h4>
 <ul>
@@ -1227,7 +1205,7 @@ GUI は <code>egui</code> + <code>egui-baseview</code>、<strong>UI の文字は
 
 <h4>オフライン検証</h4>
 <ul>
-  <li><strong><code>--peak 0</code> を付ける。</strong>既定の正規化で A/B の差が消える (PhyPiano の頻出事故)</li>
+  <li><strong><code>--peak 0</code> を付ける。</strong>既定の正規化は A/B の差を静かに消す (頻出事故)</li>
   <li>A/B フラグ — <code>--no-room</code> / <code>--no-bridge-coupling</code> / <code>--no-cabinet</code> / <code>--strike-point</code> / <code>--hammer</code> / <code>--strings</code></li>
   <li><code>--modulation</code> (帯域包絡の変動深さ) — うなりはここにしか出ない</li>
   <li><code>--correlation</code> — L/R 相関と相互相関のピーク位置</li>
@@ -1256,7 +1234,7 @@ GUI は <code>egui</code> + <code>egui-baseview</code>、<strong>UI の文字は
     </tr>
     <tr>
       <td><span class="sev hi">大</span></td>
-      <td><strong>参照音源を持たない。</strong>「参照より何 dB 暗い」で判断できない。PhyPiano が音質の追い込みで使った主要な梃子が無い</td>
+      <td><strong>参照音源を持たない。</strong>「参照より何 dB 暗い」で判断できない。音質の追い込みで最も強い梃子 (参照比較) が無い</td>
       <td>物理量が文献値の範囲に入ることを唯一の外部基準として厳守する (P1 / P3 の完了条件)。音色の判断は実機での試聴</td>
     </tr>
     <tr>
@@ -1266,7 +1244,7 @@ GUI は <code>egui</code> + <code>egui-baseview</code>、<strong>UI の文字は
     </tr>
     <tr>
       <td><span class="sev mid">中</span></td>
-      <td><strong>ROOM が粗を隠す。</strong>残響は測定の分解能を奪う。PhyPiano では響板の 0.3 秒でさえ測定を頭打ちにした</td>
+      <td><strong>ROOM が粗を隠す。</strong>残響は測定の分解能を奪う。響板の残響 0.3 秒でさえ測定を頭打ちにする</td>
       <td>P6 以降も音質判断は必ず ROOM off。<code>--no-room</code> を既定にする案も検討する</td>
     </tr>
     <tr>
@@ -1312,14 +1290,14 @@ GUI は <code>egui</code> + <code>egui-baseview</code>、<strong>UI の文字は
     <tr><td>対象楽器</td><td><strong>アメリカ式ハンマーダルシマー 15/14</strong> (ダンパー無し、木のハンマー、コース 2 本)</td><td>ツィンバロム / サントゥールは配置表と弦本数の差し替えで後から乗せる。最初から作り込まない</td></tr>
     <tr><td>空間</td><td><strong>X-Y ステレオの ROOM を内蔵する</strong> (P6)</td><td>音高依存パンは廃す。定位は楽器の幾何とマイクの指向性から出す</td></tr>
     <tr><td>参照音源</td><td><strong>持たない。</strong>設計則と文献値の範囲だけで進める</td><td>P10 を「参照との比較」から「参照なしで測れる指標 + 試聴」に置き換えた</td></tr>
-    <tr><td>PhyPiano のコード</td><td><strong>コピーして独立させる</strong></td><td>重複は許容。パス依存にしない</td></tr>
+    <tr><td>外部コード</td><td><strong>他リポジトリへのパス依存を作らない</strong></td><td>必要なものは複製する。重複は許容</td></tr>
   </tbody>
 </table>
 </div>
 
 <h4>未決 — 着手時に判断すればよいもの</h4>
 <ul>
-  <li><strong>マイクロチューニング</strong> (<code>.tun</code> / <code>.scl</code>)。PhyPiano から丸ごと移植できる資産だが、この楽器の主要件ではない。P7 以降のオプションとして保留。
+  <li><strong>マイクロチューニング</strong> (<code>.tun</code> / <code>.scl</code>)。この楽器の主要件ではない。P7 以降のオプションとして保留。
   ただし<strong>ブリッジ位置による純正 5 度 ⇔ 平均律の切り替えは物理から出る</strong>ので P7 に含む</li>
 </ul>
 

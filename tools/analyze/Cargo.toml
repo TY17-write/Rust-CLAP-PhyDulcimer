@@ -6,9 +6,9 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
-# lib と bin に分けてある。PhyPiano では解析器が bin の中の `mod analysis` に
-# 閉じていて、`tests/` から叩けなかった。測定器そのものの正しさを統合テストで
-# 固定したいので、こちらでは lib として公開する。
+# lib と bin に分けてある。解析器を bin の中に閉じ込めると `tests/` から
+# 叩けない。参照音源を持たないプロジェクトでは測定器そのものの正しさが
+# 唯一の足場なので、統合テストで固定できるよう lib として公開する。
 [lib]
 name = "phydulcimer_analyze"
 path = "src/lib.rs"

@@ -586,7 +586,7 @@ mod tests {
         assert!(!editor.update_glows(0.0));
     }
 
-    /// P-037 (PhyPiano) の回帰: 画面に出す文字列は ASCII のみ。
+    /// 画面に出す文字列は ASCII のみ、の回帰。
     /// egui の既定フォントに日本語グリフが無く、DAW 上で豆腐になる。
     /// ソースを直接見て確かめる (描画結果からは取り出せない)。
     #[test]

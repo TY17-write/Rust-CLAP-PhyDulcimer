@@ -180,7 +180,7 @@ impl DefaultPluginFactory for PhyDulcimerPlugin {
 ///
 /// GUI (`egui-baseview`) のコールバックは `'static + Send` を要求するので、
 /// clack の Shared への参照をそのまま渡せない。`Arc` で包んだ実体をここに
-/// 置き、[`PhyDulcimerShared`] は薄い殻にする (PhyPiano と同じ形)。
+/// 置き、[`PhyDulcimerShared`] は薄い殻にする。
 /// **GUI スレッドは DSP の状態に触らない** — 窓口はこの構造体だけ。
 pub struct SharedState {
     pub(crate) params: ParamValues,
@@ -585,7 +585,7 @@ impl PhyDulcimerAudioProcessor<'_> {
     ///
     /// これが無いとホストは値が変わったことを知らない — オートメーションに
     /// 乗らず、Undo も効かず、プロジェクトが「未変更」のままになる
-    /// (PhyPiano の同名実装の写し)。イベントキューが満杯なら諦めて捨てる
+    /// イベントキューが満杯なら諦めて捨てる
     /// (値そのものはアトミックに入っており、次の変更でまた通知される)。
     fn emit_gui_edits(&mut self, out: &mut OutputEvents) {
         let mut edits = self.shared.take_gui_edits();

@@ -26,7 +26,7 @@
 //!   チョークを壊す)
 //! - 入力重み: 駆動点でのモード振幅 (符号つき乱数)
 //! - 出力重み: 放射先でのモード振幅 × **放射効率** (低域は板の表裏が打ち
-//!   消して音にならない、P-039 の radiation) × 高域ロールオフ
+//!   消して音にならない) × 高域ロールオフ
 //!
 //! 乱数はゾーンの種から決定的に引く。ビルドごとに音が変わってはいけない。
 
@@ -142,7 +142,8 @@ impl Soundboard {
             let spacing = base * ((params.f_max_hz / params.f_min_hz).ln() / count);
             let freq = (base + spacing * (rng.unit() - 0.5) * 0.8).min(nyquist_guard);
 
-            // 減衰: 対数補間 + 散らし [0.7, 1.3]。上限はクランプ (P-039)。
+            // 減衰: 対数補間 + 散らし [0.7, 1.3]。上限はクランプ
+            // (クランプしないと鳴り止まないモードができる)。
             let k =
                 (params.t60_high / params.t60_low).ln() / (params.f_max_hz / params.f_min_hz).ln();
             let t60_base = params.t60_low * (freq / params.f_min_hz).powf(k);
@@ -221,7 +222,7 @@ mod tests {
         // (t60_low 0.30 × 1.2 = 0.36 s が最長)。
         assert!(
             late < early * 1e-3,
-            "響板が鳴り止まない: {early:.3e} → {late:.3e} (P-039 のクランプ漏れ?)"
+            "響板が鳴り止まない: {early:.3e} → {late:.3e} (減衰散らしのクランプ漏れ?)"
         );
     }
 

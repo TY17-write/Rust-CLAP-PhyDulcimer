@@ -4,9 +4,7 @@
 //! 読み込むときに返してくる。DAW のプリセット機能も同じ経路を使う。
 //! **プラグイン自身はファイルを書かない** — 置き場所はホストが決める
 //! (プロジェクトファイルの内部、または DAW のプリセットフォルダ)。
-//! 独自プリセットブラウザは持たない (ユーザー決定、2026-09-01)。
-//!
-//! PhyPiano の `state.rs` からの複製 (調律ファイルの項目を除いたもの)。
+//! 独自プリセットブラウザは持たない。
 //!
 //! # なぜテキスト形式か
 //!
@@ -140,7 +138,7 @@ mod tests {
         // 別のプラグインの状態を渡されたときに黙って受け入れない。
         assert!(State::deserialize("").is_none());
         assert!(State::deserialize("someotherplugin 1\nparam 1 0.5\n").is_none());
-        assert!(State::deserialize("phypiano 1\nparam 1 0.5\n").is_none());
+        assert!(State::deserialize("someothersynth 1\nparam 1 0.5\n").is_none());
         assert!(State::deserialize("phydulcimer\n").is_none());
         assert!(State::deserialize("phydulcimer abc\n").is_none());
         assert!(State::deserialize("phydulcimer 1\n").is_some());
