@@ -406,7 +406,7 @@ pre i { color: var(--ink-faint); font-style: normal; }
   <div class="facts">
     <span><b>ディレクトリ</b> Rust-CLAP-PhyDulcimer</span>
     <span><b>プラグイン ID</b> jp.ty17.phydulcimer</span>
-    <span><b>状態</b> P7 / P9 前半 / P10 (音域・面・低音弦) まで実装済み — P8 は保留</span>
+    <span><b>状態</b> P7 / P8 / P9 前半 / P10 (音域・面・低音弦) まで実装済み</span>
     <span><b>更新</b> 2026-09-01</span>
   </div>
 </header>
@@ -1149,6 +1149,9 @@ GUI は <code>egui</code> + <code>egui-baseview</code>、<strong>UI の文字は
     <div class="done"><h4>完了条件</h4><ul>
       <li>最悪ケース (全弦アクティブ + ROOM on) で <strong>CPU 25% 未満</strong></li>
       <li>ベンチの数値を <code>context.md</code> の表に固定する</li>
+    </ul></div>
+    <div class="done"><h4>実施済み (2026-09-01)</h4><ul>
+      <li>SIMD は P4 で移植済み。<strong>active スキップ (D-027)</strong> — 出力が約 −140 dBFS を下回り続けた区間は眠り、バンクを回さない。無音の半音階エンジン 502 → 32 µs/block (エディタ表示中は眠らない D-025 と重なって GUI が重くなる実害が出たため)</li>
     </ul></div>
   </div>
 </div>
