@@ -406,8 +406,8 @@ pre i { color: var(--ink-faint); font-style: normal; }
   <div class="facts">
     <span><b>ディレクトリ</b> Rust-CLAP-PhyDulcimer</span>
     <span><b>プラグイン ID</b> jp.ty17.phydulcimer</span>
-    <span><b>状態</b> 計画のみ / Phase 0 未着手</span>
-    <span><b>更新</b> 2026-08-31</span>
+    <span><b>状態</b> P7 / P9 前半 / P10 (音域・面・低音弦) まで実装済み — P8 は保留</span>
+    <span><b>更新</b> 2026-09-01</span>
   </div>
 </header>
 
@@ -734,7 +734,7 @@ PhyPiano の実測は低音 3.9 µs。着手時にベンチで測り、足りな
   <li><strong>ヘルムホルツ共鳴 + 板の最低次モードの 2 自由度結合</strong>を足す (音孔と箱)。Vongsawad らは音孔が放射音に強く効くことを示している</li>
   <li>弦ごとのブリッジ力ハイパスは移植する</li>
   <li>配置は <code>layout.rs</code> に表で持つ。既定は 15/14 の D/G 全音階。<strong>同じ音高が複数の場所に存在する</strong>ので MIDI からの割当は 1 対多</li>
-  <li><strong>E3–E6 の半音階配置 (37 音) も表として持つ</strong>。クロマチックダルシマー (Dusty Strings Chromatic 系) も一般的な実機で、全音階の欠落が無い。設計則は同じものを使い、音域で 3 バンク (バス / トレブル右 / 左) に割り付ける。切り替えはプラグインのパラメータで、弦バンクの再構築を伴うので <code>activate</code> 時 (または両バンク事前構築) に行う — 実装は P7</li>
+  <li><strong>D#2–E6 の半音階配置 (50 音) も表として持つ</strong>。クロマチックダルシマー (Dusty Strings Chromatic 系) も一般的な実機で、全音階の欠落が無い。設計則は同じものを使い、音域で 3 バンク (バス / トレブル右 / 左) に割り付ける。切り替えはプラグインのパラメータで、弦バンクの再構築を伴うので <code>activate</code> 時 (または両バンク事前構築) に行う — E3–E6 の 37 音は P7 で実装、<strong>D#2–D#3 のブロンズ巻低音弦ブロック 13 コース</strong> (ツィンバロムのバス弦群に相当、別ジオメトリで既存弦の校正を壊さない) は P10 で追加</li>
 </ul>
 
 <div class="note rule">
@@ -1129,7 +1129,7 @@ GUI は <code>egui</code> + <code>egui-baseview</code>、<strong>UI の文字は
     <ul>
       <li>打弦点 CC、ハンマーの当たり面 (木 / レザー / フェルト) 切り替え</li>
       <li>ミュート (手のひら)、ハーモニクス、ブリッジ位置 (純正 ⇔ 平均律)</li>
-      <li><strong>配置の切り替え: 15/14 全音階 ⇔ E3–E6 半音階 (37 音)</strong>。半音階も一般的な実機 (クロマチックダルシマー)。設計則は共通、表の差し替えで乗せる。弦バンクの再構築を伴うので activate 時に適用</li>
+      <li><strong>配置の切り替え: 15/14 全音階 ⇔ 半音階</strong> (P7 時点は E3–E6 の 37 音。P10 で D#2–D#3 のブロンズ巻低音弦ブロックを足し 50 音)。半音階も一般的な実機 (クロマチックダルシマー)。設計則は共通、表の差し替えで乗せる。弦バンクの再構築を伴うので activate 時に適用</li>
       <li>ツィンバロム用のダンパーペダルを<strong>オプションとして</strong>外付け</li>
     </ul>
     <div class="done"><h4>完了条件</h4><ul>
@@ -1190,6 +1190,11 @@ GUI は <code>egui</code> + <code>egui-baseview</code>、<strong>UI の文字は
     <div class="done"><h4>運用ルール</h4><ul>
       <li><strong>測定は必ず ROOM off。</strong>部屋は粗を隠す</li>
       <li>音色の判断は実機での試聴に頼る。ただし<strong>耳の指摘をそのままパラメータに反映しない</strong> — まず上表のどれが動いているかを測ってから触る</li>
+    </ul></div>
+    <div class="done"><h4>実施済み (2026-09-01)</h4><ul>
+      <li><strong>音域バランス (LUFS 校正)</strong> — 全鍵掃引をターゲット直線に載せるコースゲイン表 (D-021 / D-022)</li>
+      <li><strong>撥の面のラウドネス補償</strong> — レザー/フェルトの音域依存の凹み (トレブルで 10–21 LU) を、打った区間の f0 で引く校正表で木と揃えた。励振の等価変換で音色不変 (D-026)</li>
+      <li><strong>半音階に低音弦ブロック D#2–D#3 を追加</strong> — ブロンズ巻 13 コース、補正後は全 50 鍵が直線 ±0.79 LU (§03 参照)</li>
     </ul></div>
   </div>
 </div>
