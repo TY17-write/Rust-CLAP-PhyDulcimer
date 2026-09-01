@@ -1,0 +1,60 @@
+# Release — .clap の配布。
+#
+# `v*` タグを push すると、テストを通した上で Windows 用の
+# PhyDulcimer.clap を zip に固めて GitHub Release に添付する。
+# workflow_dispatch (手動実行) では Release を作らず、Actions の
+# アーティファクトとして同じ zip を残す (動作確認用)。
+#
+# 対象は Windows x86_64 のみ (CLAP は DLL を .clap に改名するだけ)。
+# macOS はバンドル化と署名/公証、Linux は GUI (baseview) のシステム依存の
+# 検証が必要なので、需要が出てから足す。
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # 配布物はテストを通ったコミットからだけ作る。
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Build plugin
+        run: cargo build --release -p phydulcimer-plugin
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item target/release/phydulcimer_plugin.dll dist/PhyDulcimer.clap
+          Copy-Item README.md, LICENSE-MIT, LICENSE-APACHE dist/
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { 'dev' }
+          Compress-Archive -Path dist/* -DestinationPath "PhyDulcimer-$version-windows-x86_64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PhyDulcimer-windows-x86_64
+          path: PhyDulcimer-*.zip
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: PhyDulcimer-*.zip
+          generate_release_notes: true

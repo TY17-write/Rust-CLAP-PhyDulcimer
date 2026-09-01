@@ -1,5 +1,9 @@
 /target
 /out
+
+# リリースのパッケージ作業ディレクトリ (CI が作る。ローカルのリハーサル含む)
+/dist
+/PhyDulcimer-*.zip
 **/*.rs.bk
 *.pdb
 

@@ -51,6 +51,24 @@ cargo test --workspace
 
 ## CLAP プラグインとして使う
 
+### ダウンロード (ビルド済み)
+
+[GitHub Releases](https://github.com/TY17-write/Rust-CLAP-PhyDulcimer/releases)
+から `PhyDulcimer-<version>-windows-x86_64.zip` を取得し、中の
+`PhyDulcimer.clap` を DAW の CLAP フォルダ (通常
+`C:\Program Files\Common Files\CLAP`) へ置く。
+
+リリースは GitHub Actions が作る: `v*` タグを push すると、テストを通した
+上で `.clap` を zip に固めて Release に添付する
+([.github/workflows/release.yml](.github/workflows/release.yml))。
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+### 自分でビルドする
+
 ```bash
 cargo build --release -p phydulcimer-plugin
 copy target\release\phydulcimer_plugin.dll target\PhyDulcimer.clap
@@ -268,4 +286,4 @@ cargo run --release -p phydulcimer-analyze -- --in out/roll.wav --grain 8
 
 ## ライセンス
 
-MIT OR Apache-2.0
+MIT OR Apache-2.0 ([LICENSE-MIT](LICENSE-MIT) / [LICENSE-APACHE](LICENSE-APACHE))
