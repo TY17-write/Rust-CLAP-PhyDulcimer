@@ -9,9 +9,9 @@ Rust で書くハンマーダルシマー物理モデリング音源 (CLAP プ�
 
 > ## 本プロジェクトについて
 >
-> **このプロジェクトは Anthropic の Claude Opus 5 によって作成されています。**
+> **このプロジェクトは Anthropic の Claude (Opus 5 / Fable 5) によって作成されています。**
 >
-> 論文調査、アルゴリズム選定、アーキテクチャ設計、実装、テストのすべてが Opus 5 に
+> 論文調査、アルゴリズム選定、アーキテクチャ設計、実装、テストのすべてが Claude に
 > よるものです。楽器の物理と手法選定の根拠は [`docs/research.md`](docs/research.md) に、
 > 設計判断と意図的に諦めた近似は [`docs/problems.md`](docs/problems.md) に記録しています。
 >
@@ -21,8 +21,9 @@ Rust で書くハンマーダルシマー物理モデリング音源 (CLAP プ�
 
 ## 現在の状態
 
-**Phase 6 (ROOM — X-Y ステレオ) まで完了。** 弦 2 本のコース・ブリッジ結合・
-響板と箱・X-Y の部屋が揃い、アンビエント込みのステレオで鳴る。
+**全フェーズ (Phase 0–10) 実装済み。** 弦 2 本のコース・ブリッジ結合・
+響板と箱・X-Y の部屋・GUI・state 保存まで揃い、アンビエント込みの
+ステレオで鳴る。
 
 | Phase | 内容 | 状態 |
 |---|---|---|
@@ -34,11 +35,11 @@ Rust で書くハンマーダルシマー物理モデリング音源 (CLAP プ�
 | 5 | 響板と箱 | ✅ 完了 |
 | 6 | ROOM — X-Y ステレオ | ✅ 完了 |
 | 7 | 演奏表現 (撥の面・ミュート・音律・配置切り替え) | ✅ 完了 (コア 4 項目。ダンパーペダル・ハーモニクスはスコープ外) |
-| 8 | 最適化 (SIMD) | 未着手 |
-| 9 | GUI とプリセット | 前半完了 (egui エディタ — 鍵盤 + マイクステージ)。プリセット/state は未着手 |
-| 10 | 音色の追い込み | 前半のみ完了 (音域バランスの LUFS 校正) |
+| 8 | 最適化 (active スキップ — 鳴っていない弦を眠らせる) | ✅ 完了 (SIMD は P1 から) |
+| 9 | GUI (egui エディタ) と state 拡張 (設定の保存・復元) | ✅ 完了 (独自プリセットブラウザは持たない) |
+| 10 | 音色の追い込み (音域バランス / 撥の面の音量補償 / 半音階の低音弦ブロック / ビルトインコンプ) | ✅ 完了 |
 
-テスト 241 件、`cargo clippy` / `cargo fmt` ともにクリーン。
+テスト 273 件、`cargo clippy` / `cargo fmt` ともにクリーン。
 全体計画とフェーズ構成は [`docs/plan.html`](docs/plan.html)。
 
 ## ビルド
@@ -96,7 +97,10 @@ cargo run --release -p phydulcimer-render -- --table
 
 半音階は `--table --layout chromatic`。
 
-### MIDI CC (GUI が入る Phase 9 までの操作手段)
+### MIDI CC
+
+演奏中に動かすことの多いパラメータは CC でも触れる (ホイールや
+コントローラから)。GUI・ホストのオートメーション・CC は同じ値を動かす (後勝ち)。
 
 | CC | パラメータ | 値の意味 |
 |---|---|---|
@@ -105,13 +109,12 @@ cargo run --release -p phydulcimer-render -- --table
 | **CC70** | Hammer Face | 0–42 = Wood / 43–84 = Leather / 85–127 = Felt |
 | **CC74** | Strike Position | 0 = ブリッジ寄り x/L 0.03 (明るい) / 127 = 中央寄り 0.30 (丸い) |
 
-CC とホストのオートメーションは同じ値を動かす (後勝ち)。
-
 ### 実機確認チェックリスト (DAW でしか確認できない)
 
 自動テストは CLAP の ABI までを検証する。以下はホスト実機でのみ確かめられる:
 
-1. ロードできて音が出るか (鍵域は G2–D6 の全音階。外と半音の欠落は無音が正しい)
+1. ロードできて音が出るか (既定は D#2–E6 半音階 50 音 — 全鍵が鳴る。
+   15/14 に切り替えた場合は半音の欠落と鍵域外が無音になるのが正しい)
 2. 離鍵しても鳴り続けるか (切れたらバグ)
 3. 再生停止で音が止まるか / ループ再生で音量が頭打ちになるか
    (連打で膨らむのはロールの物理として正しいが、際限なく増えたらバグ)
@@ -129,8 +132,8 @@ GUI (Phase 9 前半) の確認項目:
    追従するか。逆にホストのオートメーションが GUI に反映されるか
 9. **鍵盤クリックで音が出るか — トランスポート停止中と再生中の両方**
    (停止中はプラグインのスリープ抑止の検証)。クリックの高さで音量が変わるか
-10. MIDI 打鍵で該当の鍵が光り、約 0.3 秒で消えるか。15/14 で鳴らない半音を
-    押しても光らないか
+10. MIDI 打鍵で該当の鍵が光り、約 0.3 秒で消えるか。配置に無い鍵
+    (15/14 の半音など) を押しても光らないか
 11. Layout/Temperament を GUI で変えると赤い "pending" と **Reload ボタン**が
     出て、Reload を押すとその場で弦バンクが切り替わる (鍵盤の色分けが変わり
     チップが消える) か。再生中に押しても音が破綻しないか
@@ -138,6 +141,11 @@ GUI (Phase 9 前半) の確認項目:
     右のスライダと一致して動くか
 13. エディタ表示中のアイドル CPU が許容内か。閉じると下がるか (Sleep 復帰)
 14. 2 インスタンス同時に開いても互いに干渉しないか
+15. プロジェクトを保存 → 閉じて開き直すと設定 (Layout / Comp 等) が
+    復元されるか (CLAP state 拡張)
+16. Hammer Face を Leather / Felt に切り替えても音量が Wood と大きく
+    変わらないか ([D-026](docs/problems.md) の補償)。`Comp` を上げると
+    ロールで各打撃が浮き出るか ([D-029](docs/problems.md))
 
 ## 検証ツール (render / analyze)
 
@@ -162,6 +170,10 @@ cargo run --release -p phydulcimer-analyze -- --in out/chord.wav --correlation
 cargo run --release -p phydulcimer-render -- --table
 cargo run --release -p phydulcimer-render -- --soundboard --out out/ir.wav --dur 1.0
 cargo run --release -p phydulcimer-render -- --contact-table --os 64
+
+# 2 鍵のロール (交互連打) と、その粒立ち (打撃周期ごとの包絡の起伏)
+cargo run --release -p phydulcimer-render -- --instrument --key 69 --key 74 --roll 8 --vel 1.0 --dur 6.0 --no-room --out out/roll.wav
+cargo run --release -p phydulcimer-analyze -- --in out/roll.wav --grain 8
 ```
 
 `-h` で全オプションが出る。
@@ -178,7 +190,9 @@ cargo run --release -p phydulcimer-render -- --contact-table --os 64
 | 打弦点 1/8 のノッチ (第 8 部分音) | — | **約 −90 dB** |
 | ユニゾンのうなり (包絡リップル) | — | **32–36 dB** |
 | L/R 相互相関のピーク位置 | lag 0 (X-Y の定義) | **lag 0** (係数 0.95) |
-| 全 44 位置 ff の最悪ケース CPU | < 50% | **484 µs / 1333 µs = 36%** |
+| 音域バランス (LUFS、直線からの残差) | ±2.5 LU | 15/14 **±2.0** / 半音階 **±0.79 LU** |
+| 全弦 ff の最悪ケース CPU (開発機) | < 締切 1333 µs | 15/14 **127 µs** / 半音階 61 位置 **661–785 µs** |
+| 無音時 CPU (active スキップ後) | — | **32 µs/block** (半音階エンジン) |
 
 全実測値と経緯は [`docs/context.md`](docs/context.md) §4。
 
@@ -205,9 +219,13 @@ cargo run --release -p phydulcimer-render -- --contact-table --os 64
   未実装 ([D-018](docs/problems.md))
 - 響板は板のシミュレーションではなくフィルタ近似で、箱と合わせてパラメータは
   校正値。打撃過渡が支配的な音になる ([D-020](docs/problems.md))
-- 音域バランスは校正済み: 全 27 鍵の LUFS モーメンタリ最大が
-  `LUFS(A4) + 1.0 LU/oct` の直線 ±2.0 LU ([D-021](docs/problems.md))。
-  音色の追い込み (Phase 10 後半) は未着手
+- 音域バランスは校正済み: LUFS モーメンタリ最大が `LUFS(A4) + 1.0 LU/oct`
+  の直線に対し 15/14 全 27 鍵 ±2.0 LU、半音階全 50 鍵 ±0.79 LU
+  ([D-021](docs/problems.md) / [D-022](docs/problems.md))
+- 撥の面 (レザー/フェルト) の音量は木と揃えてあるが、補償は静的ゲインなので
+  演奏の強さによって数 LU の残差が出る ([D-026](docs/problems.md))
+- エディタは Windows の表示スケーリング 125%/150% で親枠とずれる既知の
+  歪みがある ([D-024](docs/problems.md))
 
 解消済みの問題も含め、全記録は [`docs/problems.md`](docs/problems.md) (D-001〜)。
 
