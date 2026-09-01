@@ -619,42 +619,49 @@ fn layout_parameter_applies_at_the_next_activate() {
     // 「render #1 で切り替え → render #2 から効く」を検証できる。
     let mut rig = Rig::new();
 
-    // render #1: 既定の 15/14。G#4 (68) は無音。パラメータをここで送る。
+    // render #1: 既定は半音階 D#2–E6 (2026-09-01 からの既定)。G#4 (68) は
+    // 鳴る。ここで 15/14 への切り替えを送るが、**同じ activate 内では
+    // 変わらない**こと (鳴ることが同一 activate 内の不変の証拠)。
     let (l1, _) = rig.render(20, |b, ev| {
         if b == 0 {
             push_note_on(ev, 0, 68, 0.9);
-            push_param(ev, plugin_params::id::LAYOUT, 1.0);
+            push_param(ev, plugin_params::id::LAYOUT, 0.0);
         }
     });
     assert!(
-        peak(&l1) < 1e-9,
-        "同じ activate 内で配置が変わってしまった: {:.3e}",
+        peak(&l1) > 1e-4,
+        "既定が半音階になっていない (G#4 が無音): {:.3e}",
         peak(&l1)
     );
 
-    // render #2: 半音階 D#2–E6。G#4 も E6 (88) も鳴る。
+    // render #2: 15/14 が適用され、G#4 は無音になる。
     let (l2, _) = rig.render(20, |b, ev| {
         if b == 0 {
             push_note_on(ev, 0, 68, 0.9);
-            push_note_on(ev, 0, 88, 0.9);
         }
     });
-    assert!(peak(&l2) > 1e-4, "半音階で G#4/E6 が鳴らない");
+    assert!(
+        peak(&l2) < 1e-9,
+        "次の activate で 15/14 に切り替わらない: {:.3e}",
+        peak(&l2)
+    );
 
-    // 戻すのも同じ形。render #3 で 15/14 に戻り、G#4 は再び無音。
+    // 戻すのも同じ形。render #3 で送り、render #4 で半音階に戻って
+    // G#4 も低音弦ブロックの D#2 (39) も鳴る。
     let (_, _) = rig.render(1, |b, ev| {
         if b == 0 {
-            push_param(ev, plugin_params::id::LAYOUT, 0.0);
+            push_param(ev, plugin_params::id::LAYOUT, 1.0);
         }
     });
     let (l4, _) = rig.render(20, |b, ev| {
         if b == 0 {
             push_note_on(ev, 0, 68, 0.9);
+            push_note_on(ev, 0, 39, 0.9);
         }
     });
     assert!(
-        peak(&l4) < 1e-9,
-        "15/14 に戻したのに G#4 が鳴る: {:.3e}",
+        peak(&l4) > 1e-4,
+        "半音階に戻したのに G#4/D#2 が鳴らない: {:.3e}",
         peak(&l4)
     );
 }
@@ -686,10 +693,13 @@ fn mute_cc_stops_the_ring() {
 #[test]
 fn hammer_face_parameter_darkens_the_tone() {
     // Phase 7: 撥の面。フェルト (2) は木 (0) より接触が長く、高次が出ない。
+    // 打弦点は測定条件として 0.09 に固定する (既定値 0.2 に依存させない —
+    // 0.2 では第 5 部分音の節が高次側に掛かり、面の差が縮んで見える)。
     let brightness_with_face = |face: f64| {
         let mut rig = Rig::new();
         let (left, _) = rig.render(80, move |b, ev| {
             if b == 0 {
+                push_param(ev, plugin_params::id::STRIKE_POSITION, 0.09);
                 push_param(ev, plugin_params::id::HAMMER_FACE, face);
                 push_note_on(ev, 0, 60, 0.8);
             }

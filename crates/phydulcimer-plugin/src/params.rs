@@ -55,9 +55,11 @@ pub const PARAMS: &[ParamSpec] = &[
         name: b"Strike Position",
         // 実機の奏者はブリッジから 25–50 mm を叩く (x/L = 0.05–0.15)。
         // 音色変化を確かめられるよう広めに取る。次の打撃から効く。
+        // 既定はユーザー指定の 0.2 (丸めの取れた音。2026-09-01)。
+        // 校正・掃引の測定条件は従来どおり 0.09 (docs/context.md)。
         min: 0.03,
         max: 0.30,
-        default: 0.09,
+        default: 0.20,
         unit: "",
         decimals: 3,
     },
@@ -138,10 +140,11 @@ pub const PARAMS: &[ParamSpec] = &[
         id: id::TEMPERAMENT,
         // 0 = Pure Fifth (2:3 ブリッジ、左が +2 cent)、1 = Equal (平均律の5度)。
         // ブリッジ位置 = 弦の設計が変わるので **activate 時に適用** (Phase 7)。
+        // 既定はユーザー指定の Equal (2026-09-01)。
         name: b"Temperament",
         min: 0.0,
         max: 1.0,
-        default: 0.0,
+        default: 1.0,
         unit: "",
         decimals: 0,
     },
@@ -150,10 +153,11 @@ pub const PARAMS: &[ParamSpec] = &[
         // 0 = Diatonic 15/14 (G2-D6, 27 音)、1 = Chromatic D#2-E6 (50 音、
         // ブロンズ巻低音弦ブロック込み)。
         // 弦バンクの再構築を伴うので **activate 時に適用** (Phase 7)。
+        // 既定はユーザー指定の Chromatic (2026-09-01)。
         name: b"Layout",
         min: 0.0,
         max: 1.0,
-        default: 0.0,
+        default: 1.0,
         unit: "",
         decimals: 0,
     },
