@@ -406,7 +406,7 @@ pre i { color: var(--ink-faint); font-style: normal; }
   <div class="facts">
     <span><b>ディレクトリ</b> Rust-CLAP-PhyDulcimer</span>
     <span><b>プラグイン ID</b> jp.ty17.phydulcimer</span>
-    <span><b>状態</b> P7 / P8 / P9 前半 / P10 (音域・面・低音弦) まで実装済み</span>
+    <span><b>状態</b> P7 / P8 / P9 / P10 (音域・面・低音弦・コンプ) まで実装済み</span>
     <span><b>更新</b> 2026-09-01</span>
   </div>
 </header>
@@ -1167,6 +1167,10 @@ GUI は <code>egui</code> + <code>egui-baseview</code>、<strong>UI の文字は
     <div class="done"><h4>完了条件</h4><ul>
       <li><code>README.md</code> の実機確認チェックリストを DAW で通す</li>
       <li>自動テストでは出ない不具合が必ずあると想定する (PhyPiano は 3 件出した)</li>
+    </ul></div>
+    <div class="done"><h4>実施済み (2026-09-01)</h4><ul>
+      <li><strong>前半 (GUI)</strong> — egui エディタ。実機確認で D-028 (repaint 要求が無いと描画されない) を発見・修正</li>
+      <li><strong>後半 (state 拡張)</strong> — パラメータのプロジェクト / プリセットへの保存・復元 (PhyPiano の <code>state.rs</code> の複製、テキスト形式)。<strong>独自プリセットブラウザは作らない</strong> (ユーザー決定) — 保存先はホスト任せ。Layout/Temperament の復元は次の activate で反映</li>
     </ul></div>
   </div>
 </div>

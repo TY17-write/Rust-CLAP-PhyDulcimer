@@ -31,15 +31,19 @@
 pub mod editor;
 pub mod params;
 pub mod ring;
+pub mod state;
 
 use clack_extensions::gui::PluginGui;
-use clack_extensions::{audio_ports::*, note_ports::*, params::*};
+use clack_extensions::{audio_ports::*, note_ports::*, params::*, state::*};
 use clack_plugin::events::event_types::ParamValueEvent;
 use clack_plugin::events::spaces::CoreEventSpace;
 use clack_plugin::events::{Match, Pckn};
 use clack_plugin::prelude::*;
+use clack_plugin::stream::{InputStream, OutputStream};
 use std::ffi::CStr;
 use std::fmt::Write as _;
+// CLAP の入出力ストリームは std の Read / Write を実装している。
+use std::io::{Read as _, Write as _};
 use std::ops::{Bound, Deref};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -139,6 +143,7 @@ impl Plugin for PhyDulcimerPlugin {
             .register::<PluginAudioPorts>()
             .register::<PluginNotePorts>()
             .register::<PluginParams>()
+            .register::<PluginState>()
             .register::<PluginGui>();
     }
 }
@@ -718,6 +723,32 @@ impl PluginNotePortsImpl for PhyDulcimerMainThread<'_> {
                 supported_dialects: NoteDialects::CLAP | NoteDialects::MIDI,
             });
         }
+    }
+}
+
+impl PluginStateImpl for PhyDulcimerMainThread<'_> {
+    /// プロジェクト / プリセットへ書き出す (Phase 9 後半)。
+    fn save(&self, output: &mut OutputStream) -> Result<(), PluginError> {
+        let state = state::State::capture(&self.shared.params);
+        output.write_all(state.serialize().as_bytes())?;
+        Ok(())
+    }
+
+    /// プロジェクト / プリセットから読み込む。
+    ///
+    /// 値はアトミックへ書くだけ。Layout / Temperament は次の activate で
+    /// 反映される (プロジェクトを開く流れでは load → activate の順)。
+    /// 演奏中の読み込みでは GUI の "pending / Reload" チップが受ける。
+    fn load(&self, input: &mut InputStream) -> Result<(), PluginError> {
+        let mut text = String::new();
+        input.read_to_string(&mut text)?;
+
+        let Some(state) = state::State::deserialize(&text) else {
+            // 別のプラグインの状態、あるいは壊れている。
+            return Err(PluginError::Message("状態を解釈できません"));
+        };
+        state.apply_params(&self.shared.params);
+        Ok(())
     }
 }
 

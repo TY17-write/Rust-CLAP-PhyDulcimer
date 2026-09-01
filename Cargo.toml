@@ -41,6 +41,7 @@ clack-extensions = { git = "https://github.com/prokopyl/clack.git", rev = "c5975
     "audio-ports",
     "note-ports",
     "params",
+    "state",
     "gui",
 ] }
 

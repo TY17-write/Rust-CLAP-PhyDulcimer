@@ -885,3 +885,158 @@ fn ringing_strings_do_not_survive_a_loop_restart() {
         peak(&second)
     );
 }
+
+// ---------------------------------------------------------------------------
+// state 拡張 (プロジェクト / プリセットへの保存・復元、Phase 9 後半)
+// ---------------------------------------------------------------------------
+
+/// 状態バイト列を読み込ませる。
+fn load_state(rig: &mut Rig, blob: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    use clack_extensions::state::PluginState;
+    let handle = rig.instance.plugin_handle();
+    handle
+        .get_extension::<PluginState>()
+        .expect("state 拡張があること")
+        .load(&handle, &mut &blob[..])?;
+    Ok(())
+}
+
+/// 現在の状態をバイト列に書き出させる。
+fn save_state(rig: &mut Rig) -> Vec<u8> {
+    use clack_extensions::state::PluginState;
+    let handle = rig.instance.plugin_handle();
+    let mut blob = Vec::new();
+    handle
+        .get_extension::<PluginState>()
+        .expect("state 拡張があること")
+        .save(&handle, &mut blob)
+        .expect("保存できること");
+    blob
+}
+
+/// パラメータの現在値をホスト側から読む。
+fn param(rig: &mut Rig, id: u32) -> f64 {
+    let handle = rig.instance.plugin_handle();
+    handle
+        .get_extension::<PluginParams>()
+        .expect("params 拡張があること")
+        .get_value(&handle, ClapId::from_raw(id).unwrap())
+        .expect("値が読めること")
+}
+
+#[test]
+fn state_extension_is_exposed() {
+    use clack_extensions::state::PluginState;
+    let mut rig = Rig::new();
+    let handle = rig.instance.plugin_handle();
+    assert!(
+        handle.get_extension::<PluginState>().is_some(),
+        "state 拡張が無いとプロジェクトに設定が残らない"
+    );
+}
+
+#[test]
+fn parameters_survive_a_save_and_load() {
+    // ホストがプロジェクトを保存 → 別インスタンスで開く流れを ABI 経由で通す。
+    // 既定値から動かすのに、まず状態を読み込ませてから保存し直す。
+    let mut source = Rig::new();
+    load_state(
+        &mut source,
+        b"phydulcimer 1\nparam 1 0.25\nparam 2 0.125\nparam 11 0.0\nparam 12 0.75\n",
+    )
+    .expect("読み込めること");
+
+    let blob = save_state(&mut source);
+    assert!(!blob.is_empty(), "何も書き出されていない");
+
+    let mut target = Rig::new();
+    load_state(&mut target, &blob).expect("読み込めること");
+
+    assert_eq!(param(&mut target, plugin_params::id::LEVEL), 0.25);
+    assert_eq!(
+        param(&mut target, plugin_params::id::STRIKE_POSITION),
+        0.125
+    );
+    assert_eq!(param(&mut target, plugin_params::id::LAYOUT), 0.0);
+    assert_eq!(param(&mut target, plugin_params::id::COMP), 0.75);
+}
+
+#[test]
+fn saved_state_is_readable_text() {
+    // バイナリにしていない理由 (壊れたときに直せる) が保たれていること。
+    let mut rig = Rig::new();
+    let blob = save_state(&mut rig);
+    let text = String::from_utf8(blob).expect("テキストであること");
+    assert!(
+        text.starts_with("phydulcimer "),
+        "先頭に目印が無い:\n{text}"
+    );
+    assert!(
+        text.contains("param 1 "),
+        "Level が保存されていない:\n{text}"
+    );
+    assert!(
+        text.contains("param 12 "),
+        "Comp が保存されていない:\n{text}"
+    );
+}
+
+#[test]
+fn a_restored_layout_applies_at_the_next_activate() {
+    // 復元された Layout (15/14) が次の activate で弦バンクに反映されること。
+    // Rig::render は毎回 activate し直すので、この流れで確かめられる。
+    // 既定 (半音階) では鳴る G#4 (68) が、復元後は無音になる。
+    let mut rig = Rig::new();
+    load_state(&mut rig, b"phydulcimer 1\nparam 11 0.0\n").expect("読み込めること");
+    let (left, _) = rig.render(20, |b, ev| {
+        if b == 0 {
+            push_note_on(ev, 0, 68, 0.9);
+        }
+    });
+    assert!(
+        peak(&left) < 1e-9,
+        "復元した 15/14 が activate で反映されていない: {:.3e}",
+        peak(&left)
+    );
+}
+
+#[test]
+fn restored_state_actually_changes_the_sound() {
+    // 値が戻るだけでなく、音に反映されること。Level を絞った状態を復元する。
+    let render_peak = |blob: Option<&[u8]>| {
+        let mut rig = Rig::new();
+        if let Some(blob) = blob {
+            load_state(&mut rig, blob).expect("読み込めること");
+        }
+        let (left, _) = rig.render(40, |b, ev| {
+            if b == 0 {
+                push_note_on(ev, 0, 60, 1.0);
+            }
+        });
+        peak(&left)
+    };
+
+    let loud = render_peak(None);
+    let quiet = render_peak(Some(b"phydulcimer 1\nparam 1 0.05\n"));
+
+    assert!(loud > 0.01, "基準側が鳴っていない");
+    assert!(
+        quiet < loud * 0.5,
+        "復元した Level が音に効いていない: 既定 {loud:.4} vs 復元 {quiet:.4}"
+    );
+}
+
+#[test]
+fn a_foreign_state_blob_is_rejected() {
+    // 別のプラグインの状態を渡されたら、黙って受け入れずに失敗を返す。
+    let mut rig = Rig::new();
+    assert!(
+        load_state(&mut rig, b"someotherplugin 1\nparam 1 0.5\n").is_err(),
+        "他プラグインの状態を受け入れてしまった"
+    );
+    // PhyPiano の状態も受け入れない (同じ形式の親戚だが別の楽器)。
+    assert!(
+        load_state(&mut rig, b"phypiano 1\nparam 1 0.5\n").is_err(),
+        "PhyPiano の状態を受け入れてしまった"
+    );
+}
