@@ -24,6 +24,7 @@ pub mod id {
     pub const MUTE: u32 = 9;
     pub const TEMPERAMENT: u32 = 10;
     pub const LAYOUT: u32 = 11;
+    pub const COMP: u32 = 12;
 }
 
 /// 1つのパラメータの仕様。
@@ -161,6 +162,18 @@ pub const PARAMS: &[ParamSpec] = &[
         unit: "",
         decimals: 0,
     },
+    ParamSpec {
+        id: id::COMP,
+        // ビルトインコンプ (Phase 10 後半、D-029)。両手 (2 和音・ロール) の
+        // 積み上がりを押さえて各打撃を浮き出させる (粒立ち)。
+        // 0 で厳密に素通し — **校正・測定は 0 で行う** (ROOM と同じ扱い)。
+        name: b"Comp",
+        min: 0.0,
+        max: 1.0,
+        default: 0.5,
+        unit: "",
+        decimals: 2,
+    },
 ];
 
 /// `id` に対応する仕様を返す。
@@ -202,6 +215,7 @@ pub struct ParamValues {
     pub mute: AtomicF32,
     pub temperament: AtomicF32,
     pub layout: AtomicF32,
+    pub comp: AtomicF32,
 }
 
 impl Default for ParamValues {
@@ -225,6 +239,7 @@ impl ParamValues {
             mute: AtomicF32::new(default_of(id::MUTE)),
             temperament: AtomicF32::new(default_of(id::TEMPERAMENT)),
             layout: AtomicF32::new(default_of(id::LAYOUT)),
+            comp: AtomicF32::new(default_of(id::COMP)),
         }
     }
 
@@ -244,6 +259,7 @@ impl ParamValues {
             id::MUTE => self.mute.store(v),
             id::TEMPERAMENT => self.temperament.store(v),
             id::LAYOUT => self.layout.store(v),
+            id::COMP => self.comp.store(v),
             _ => {}
         }
     }
@@ -262,6 +278,7 @@ impl ParamValues {
             id::MUTE => self.mute.load() as f64,
             id::TEMPERAMENT => self.temperament.load() as f64,
             id::LAYOUT => self.layout.load() as f64,
+            id::COMP => self.comp.load() as f64,
             _ => return None,
         })
     }

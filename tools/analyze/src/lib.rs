@@ -565,6 +565,80 @@ pub fn modulation_depth(
     })
 }
 
+/// ロールの「粒立ち」の推定結果 (Phase 10 後半、D-029)。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GrainEstimate {
+    /// 打撃周期ごとの包絡の起伏 (max/min) [dB] の中央値
+    pub depth_db: f64,
+    /// 測れた周期の数
+    pub periods: usize,
+}
+
+/// ロールの「粒立ち」— 打撃レートでの広帯域包絡の起伏 [dB]。
+///
+/// [`modulation_depth`] は部分音 1 本のうなり用で、ロールで知りたいのは
+/// 「個々の打撃が持続的な鳴りからどれだけ浮き出ているか」— 広帯域の
+/// 短窓 RMS 包絡 (窓 = 打撃周期の 1/8) を作り、**打撃周期ごとに包絡の
+/// max/min 比 [dB]** を取ってその中央値を返す。ロールが持続音に埋もれる
+/// ほど 0 dB に近づく。
+///
+/// `skip_sec` は立ち上がり (鳴りが定常に積み上がる前) を捨てる長さ。
+/// ロールでは 1–2 秒を推奨。
+pub fn grain_depth(
+    samples: &[f32],
+    sample_rate: f64,
+    rate_hz: f64,
+    skip_sec: f64,
+) -> Option<GrainEstimate> {
+    if rate_hz <= 0.0 || sample_rate <= 0.0 {
+        return None;
+    }
+    let period = sample_rate / rate_hz;
+    let win = ((period / 8.0).round() as usize).max(16);
+    let hop = (win / 2).max(1);
+    let skip = (sample_rate * skip_sec.max(0.0)) as usize;
+    if samples.len() < skip + (period as usize).max(1) * 3 {
+        return None;
+    }
+
+    // 短窓 RMS 包絡。
+    let mut env = Vec::new();
+    let mut pos = skip;
+    while pos + win <= samples.len() {
+        let sq: f64 = samples[pos..pos + win]
+            .iter()
+            .map(|&v| (v as f64) * (v as f64))
+            .sum();
+        env.push((sq / win as f64).sqrt());
+        pos += hop;
+    }
+
+    // 周期ごとの max/min 比。
+    let per_period = (period / hop as f64).round() as usize;
+    if per_period < 3 {
+        return None;
+    }
+    let mut depths: Vec<f64> = Vec::new();
+    for chunk in env.chunks(per_period) {
+        if chunk.len() < per_period {
+            break;
+        }
+        let max = chunk.iter().cloned().fold(f64::MIN, f64::max);
+        let min = chunk.iter().cloned().fold(f64::MAX, f64::min);
+        if min > 0.0 && max.is_finite() {
+            depths.push(20.0 * (max / min).log10());
+        }
+    }
+    if depths.len() < 3 {
+        return None;
+    }
+    depths.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    Some(GrainEstimate {
+        depth_db: depths[depths.len() / 2],
+        periods: depths.len(),
+    })
+}
+
 /// 1/2 オクターブバンドのレベル。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BandLevel {
@@ -1273,6 +1347,42 @@ mod tests {
         (0..n)
             .map(|i| (amp * (std::f64::consts::TAU * freq * i as f64 / SR).sin()) as f32)
             .collect()
+    }
+
+    #[test]
+    fn grain_depth_reads_the_designed_ripple() {
+        // 8 Hz のロールを模す: 各周期 (125 ms) の先頭 30 ms が振幅 1.0、
+        // 残りが 0.25 → 設計上の起伏は 20·log10(4) = 12 dB。
+        // 包絡窓 (周期の 1/8 ≈ 15.6 ms) の平滑でやや小さく読むのは仕様。
+        let rate = 8.0;
+        let n = (SR * 4.0) as usize;
+        let period = (SR / rate) as usize;
+        let x: Vec<f32> = (0..n)
+            .map(|i| {
+                let amp = if i % period < (SR * 0.030) as usize {
+                    1.0
+                } else {
+                    0.25
+                };
+                (amp * (std::f64::consts::TAU * 440.0 * i as f64 / SR).sin()) as f32
+            })
+            .collect();
+        let g = grain_depth(&x, SR, rate, 1.5).expect("測れるはず");
+        assert!(
+            (7.0..=12.5).contains(&g.depth_db),
+            "起伏の読みが設計 (約 12 dB) から外れた: {:.2} dB",
+            g.depth_db
+        );
+        assert!(g.periods >= 10);
+
+        // 定常正弦波 (ロールなし) はほぼ 0 dB。
+        let flat = sine(440.0, 0.5, n);
+        let g0 = grain_depth(&flat, SR, rate, 1.5).expect("測れるはず");
+        assert!(
+            g0.depth_db < 1.0,
+            "平坦な信号で起伏が出た: {:.2}",
+            g0.depth_db
+        );
     }
 
     #[test]

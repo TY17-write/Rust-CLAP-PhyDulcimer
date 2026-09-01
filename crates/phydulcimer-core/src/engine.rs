@@ -22,6 +22,7 @@
 //! フルスケールに収まる」に置き、出力段にソフトクリップを 1 つ置く。
 
 use crate::cabinet::{Cabinet, CabinetParams};
+use crate::compressor::Compressor;
 use crate::instrument::{Instrument, InstrumentConfig};
 use crate::room::{Room, RoomParams};
 use crate::soundboard::{Soundboard, SoundboardParams};
@@ -58,6 +59,12 @@ pub struct DulcimerEngine {
     room: Room,
     /// ROOM を通すか。**音質の測定では必ず切ること** (部屋は粗を隠す)
     room_enabled: bool,
+    /// ビルトインコンプ (Phase 10 後半、D-029)。響板後・ROOM 前、
+    /// バス/トレブルにリンクした同一ゲイン
+    comp: Compressor,
+    /// コンプの効き量 0–1。**エンジンの既定は 0 (off)** — 校正・測定は
+    /// コンプ無しで行う (ROOM と同じ扱い)。プラグインの既定が on にする
+    comp_amount: f64,
     /// ブリッジごとのバス (事前確保)
     bus_bass: Vec<Sample>,
     bus_treble: Vec<Sample>,
@@ -82,6 +89,8 @@ impl DulcimerEngine {
             cabinet: Cabinet::new(CabinetParams::default(), sample_rate),
             room: Room::new(RoomParams::default(), sample_rate),
             room_enabled: true,
+            comp: Compressor::new(sample_rate),
+            comp_amount: 0.0,
             bus_bass: vec![0.0; max_block.max(1)],
             bus_treble: vec![0.0; max_block.max(1)],
             raw_output: false,
@@ -137,6 +146,12 @@ impl DulcimerEngine {
         self.room_enabled = enabled;
     }
 
+    /// ビルトインコンプの効き量 0–1 (Phase 10 後半、D-029)。
+    /// 0 で厳密に素通し。**校正・測定は 0 で行う** (ROOM と同じ扱い)。
+    pub fn set_comp_amount(&mut self, amount: f64) {
+        self.comp_amount = amount.clamp(0.0, 1.0);
+    }
+
     /// ROOM のパラメータを差し替える (確保なし。変わったときだけ再計算)。
     pub fn set_room_params(&mut self, params: RoomParams) {
         self.room.set_params(params);
@@ -164,6 +179,7 @@ impl DulcimerEngine {
         self.sb_treble.reset();
         self.cabinet.reset();
         self.room.reset();
+        self.comp.reset();
     }
 
     /// 1 ブロックをステレオへ処理する (上書き)。返り値はブロックのピーク。
@@ -192,14 +208,20 @@ impl DulcimerEngine {
                 let sb_t = self.sb_treble.process_sample(t);
                 let cab = self.cabinet.process_sample(b + t);
 
+                // 箱 (音孔) は楽器の中央 = 両系統に半分ずつ。
+                let src_bass = (sb_b + 0.5 * cab) * CALIBRATED_GAIN;
+                let src_treble = (sb_t + 0.5 * cab) * CALIBRATED_GAIN;
+
+                // ビルトインコンプ (D-029): 検出はモノ和、適用は両系統へ同一
+                // ゲイン — L/R 間に差を作らないので X-Y の性質を壊さない。
+                // ROOM の前なので、部屋は「圧縮された楽器」を録る形になる。
+                let g = self.comp.gain(src_bass + src_treble, self.comp_amount);
+
                 if self.room_enabled {
-                    // 箱 (音孔) は楽器の中央 = 両系統に半分ずつ。
-                    let src_bass = (sb_b + 0.5 * cab) * CALIBRATED_GAIN;
-                    let src_treble = (sb_t + 0.5 * cab) * CALIBRATED_GAIN;
-                    let (l, r) = self.room.process_sample(src_bass, src_treble);
+                    let (l, r) = self.room.process_sample(src_bass * g, src_treble * g);
                     (soft_clip(l), soft_clip(r))
                 } else {
-                    let y = soft_clip((sb_b + sb_t + cab) * CALIBRATED_GAIN);
+                    let y = soft_clip((src_bass + src_treble) * g);
                     (y, y)
                 }
             };
@@ -338,6 +360,34 @@ mod tests {
         assert!(e.is_finite());
         assert!(peak <= 1.0, "フルスケールを超えた: {peak}");
         assert!(peak > 0.3, "全打鍵なのに小さすぎる: {peak}");
+    }
+
+    /// P10 後半 (D-029): ビルトインコンプの配線。
+    #[test]
+    fn the_compressor_shapes_the_sound_and_stays_bounded() {
+        // amount = 0 (既定) は素通し: 明示的に 0 を設定した個体と一致する。
+        let mut default_engine = DulcimerEngine::new(SR, BLOCK);
+        default_engine.note_on(69, 1.0);
+        default_engine.note_on(74, 1.0);
+        let (x_default, _) = render(&mut default_engine, 0.5);
+
+        let mut zero = DulcimerEngine::new(SR, BLOCK);
+        zero.set_comp_amount(0.0);
+        zero.note_on(69, 1.0);
+        zero.note_on(74, 1.0);
+        let (x_zero, _) = render(&mut zero, 0.5);
+        assert_eq!(x_default, x_zero, "amount 0 が素通しになっていない");
+
+        // amount = 1 は出力を変え、有限かつフルスケール内に収まる。
+        let mut on = DulcimerEngine::new(SR, BLOCK);
+        on.set_comp_amount(1.0);
+        on.note_on(69, 1.0);
+        on.note_on(74, 1.0);
+        let (x_on, peak) = render(&mut on, 0.5);
+        assert!(x_on.iter().all(|s| s.is_finite()));
+        assert!(peak <= 1.0, "コンプ on でフルスケールを超えた: {peak}");
+        let diff = x_default.iter().zip(&x_on).filter(|(a, b)| a != b).count();
+        assert!(diff > 1000, "コンプが出力に効いていない");
     }
 
     /// 校正の固定: ff 単音のピークが −14〜−6 dBFS。

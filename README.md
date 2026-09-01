@@ -78,7 +78,9 @@ Phase 9 から GUI (egui + egui-baseview) が入り、依存が ~130 crate 増�
   `X-Y Angle` (60–135°) / `Room Size` (S/M/L) / `Wall Absorption` /
   `Hammer Face` (Wood/Leather/Felt、次の打撃から) /
   `Mute` (パームミュート 0–1、鳴っている弦に即効く) /
-  `Temperament` (Pure Fifth/Equal) / `Layout` (Diatonic 15/14 / Chromatic D#2-E6)
+  `Temperament` (Pure Fifth/Equal) / `Layout` (Diatonic 15/14 / Chromatic D#2-E6) /
+  `Comp` (ビルトインコンプ 0–1、既定 0.5 — 両手のロール・和音の積み上がりを
+  押さえて各打撃を浮き出させる。0 で厳密に素通し、[D-029](docs/problems.md))
 - **ROOM は X-Y ステレオの模倣**: L/R に時間差を作らない (定位はレベル差だけ)。
   DAW 側で空間を作るときは `Room = Off`。**音質の判断も必ず Off で**
 

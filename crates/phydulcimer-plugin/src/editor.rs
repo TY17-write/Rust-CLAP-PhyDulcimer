@@ -372,6 +372,7 @@ mod tests {
             (g::MUTE, id::MUTE),
             (g::TEMPERAMENT, id::TEMPERAMENT),
             (g::LAYOUT, id::LAYOUT),
+            (g::COMP, id::COMP),
         ] {
             assert_eq!(gui, plugin);
         }

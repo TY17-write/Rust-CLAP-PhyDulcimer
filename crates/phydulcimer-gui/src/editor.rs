@@ -201,6 +201,10 @@ impl<H: EditorHost> Editor<H> {
 
         self.slider(ui, param_id::MUTE, "Mute");
         self.cc_hint(ui, "CC1 - palm on strings, immediate");
+        ui.add_space(6.0);
+
+        self.slider(ui, param_id::COMP, "Comp");
+        self.cc_hint(ui, "2-hand rolls: tames the wash, keeps each strike");
         ui.add_space(8.0);
 
         ui.label(
@@ -421,7 +425,7 @@ mod tests {
     }
 
     fn specs() -> Vec<ParamDescriptor> {
-        // プラグイン側と同じ 11 個 (値はテストに足る範囲だけ正確に)。
+        // プラグイン側と同じ 12 個 (値はテストに足る範囲だけ正確に)。
         let mk = |id: u32, name: &str, min: f64, max: f64, default: f64, decimals: usize| {
             ParamDescriptor {
                 id,
@@ -452,6 +456,7 @@ mod tests {
             mk(param_id::MUTE, "Mute", 0.0, 1.0, 0.0, 2),
             mk(param_id::TEMPERAMENT, "Temperament", 0.0, 1.0, 0.0, 0),
             mk(param_id::LAYOUT, "Layout", 0.0, 1.0, 0.0, 0),
+            mk(param_id::COMP, "Comp", 0.0, 1.0, 0.5, 2),
         ]
     }
 

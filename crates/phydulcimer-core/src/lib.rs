@@ -26,6 +26,7 @@
 #![forbid(unsafe_code)]
 
 pub mod cabinet;
+pub mod compressor;
 pub mod course;
 pub mod engine;
 pub mod hammer;

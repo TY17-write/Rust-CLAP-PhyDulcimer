@@ -35,8 +35,23 @@
 | 10 前半 | **音域バランス (LUFS 校正)** | ✅ (2026-08-31) |
 | 10 後半 | **撥の面のラウドネス補償 (D-026)** | ✅ (2026-09-01) |
 | 10 後半 | **半音階に低音弦ブロック D#2–D#3 (ブロンズ巻) を追加** | ✅ (2026-09-01) |
+| 10 後半 | **ビルトインコンプ (粒立ち、D-029)** | ✅ (2026-09-01) |
 
-テスト 251 件、`cargo clippy` / `cargo fmt` ともにクリーン。
+テスト 259 件、`cargo clippy` / `cargo fmt` ともにクリーン。
+
+### ビルトインコンプで決めたこと (2026-09-01、D-029)
+
+- **指標が先**: `render --roll` + `analyze --grain` (打撃周期ごとの包絡
+  max/min 比)。実測で 2 つ判明 — 速いアタックは打撃ピークを捕まえて
+  逆効果、下方向コンプ単体では粒立ちは上がらない (トラフの最小値は
+  ゲインが最も回復した位相にある)
+- 構成: しきい値 −24 dBFS / 3:1 / アタック 40 ms / リリース 180 ms /
+  メイクアップ +2 dB + **オンセットブースト最大 +4 dB** (速い包絡 1.5/30 ms
+  との比)。検出はモノ和、適用は両系統へ同一ゲイン (X-Y 保全、ROOM 前)
+- 効果 (ff 2 鍵ロール、amount 1.0): 粒立ち 8 Hz で 6.7 → **8.7 dB**、
+  ラウドネス +1.9 LU、ff 和音ピーク −3.2 dBFS
+- **エンジン既定 0 (素通し) = 校正はコンプ無し** (ROOM と同じ扱い)。
+  プラグインの `Comp` パラメータ (id 12) の既定 0.5 が演奏体験に乗せる
 
 ### 低音弦ブロックで決めたこと (2026-09-01)
 
@@ -282,6 +297,15 @@ cargo run --release -p phydulcimer-analyze -- --in out/sweep/key-69.wav --lufs
 
 半音階は `--layout chromatic` を付ける (render の --sweep / --table / --instrument 共通)。
 打弦点の指標は `analyze --centroid --f0ref <HZ>` (部分音重心、Phase 7)。
+
+ロールの粒立ち (Phase 10 後半、D-029):
+
+```bash
+# 2 鍵を 8 Hz で循環連打 (ロール)。--comp はビルトインコンプの効き量
+cargo run --release -p phydulcimer-render -- --instrument --key 69 --key 74 --roll 8 --vel 1.0 --dur 6.0 --no-room --comp 1.0 --out out/roll.wav
+# 打撃周期ごとの包絡 max/min 比 [dB] の中央値 (大きいほど粒立つ)
+cargo run --release -p phydulcimer-analyze -- --in out/roll.wav --grain 8
+```
 
 ### 測るときに知っておくこと
 

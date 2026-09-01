@@ -13,8 +13,8 @@ use std::process::ExitCode;
 
 use phydulcimer_analyze::{
     band_levels, estimate_fundamental, estimate_inharmonicity, estimate_partial_t60_with,
-    estimate_t60, find_partial, goertzel_magnitude, loudness, modulation_depth, read_wav,
-    spectral_centroid_partials, stereo_correlation, to_db, Wav,
+    estimate_t60, find_partial, goertzel_magnitude, grain_depth, loudness, modulation_depth,
+    read_wav, spectral_centroid_partials, stereo_correlation, to_db, Wav,
 };
 
 const USAGE: &str = "\
@@ -52,6 +52,10 @@ OPTIONS:
                            autocorrelation f0 when --f0ref is absent) with
                            --count partials
     --f0ref <HZ>           fundamental for --centroid                [default: auto]
+    --grain <RATE_HZ>      roll articulation: per-period envelope ripple [dB]
+                           at the strike rate (render with --roll). skips the
+                           first 1.5 s (build-up); higher = each strike stands
+                           out more from the sustained ring
     --lufs                 loudness per BS.1770-4 (momentary max + integrated).
                            measured on ALL channels as-is, independent of
                            --channel (mono-mixing first would read ~3 dB low).
@@ -88,6 +92,7 @@ struct Args {
     bands: bool,
     correlation: bool,
     lufs: bool,
+    grain: Option<f64>,
     centroid: bool,
     f0ref: Option<f64>,
 }
@@ -118,6 +123,7 @@ impl Default for Args {
             bands: false,
             correlation: false,
             lufs: false,
+            grain: None,
             centroid: false,
             f0ref: None,
         }
@@ -219,6 +225,18 @@ fn run() -> Result<(), String> {
                 println!("                     (single notes: compare the momentary max)");
             }
             None => println!("loudness (BS.1770)   —  (400 ms 未満は測れません)"),
+        }
+    }
+
+    if let Some(rate) = args.grain {
+        // ロールの粒立ち — 打撃レートでの包絡の起伏。立ち上がり 1.5 秒は
+        // 鳴りが積み上がる途中なので捨てる (D-029)。
+        match grain_depth(&samples, sr, rate, 1.5) {
+            Some(g) => println!(
+                "grain (roll {rate:.1} Hz)   depth: {:>6.2} dB   ({} periods, skip 1.5 s)",
+                g.depth_db, g.periods
+            ),
+            None => println!("grain    —  (信号が短すぎるかレートが不正です)"),
         }
     }
 
@@ -392,6 +410,7 @@ fn parse_args(argv: Vec<String>) -> Result<Option<Args>, String> {
             "--bands" => args.bands = true,
             "--correlation" => args.correlation = true,
             "--lufs" => args.lufs = true,
+            "--grain" => args.grain = Some(parse_f64(&value()?, "--grain")?),
             "--centroid" => args.centroid = true,
             "--f0ref" => args.f0ref = Some(parse_f64(&value()?, "--f0ref")?),
             other => return Err(format!("不明な引数: {other}")),

@@ -41,6 +41,11 @@ INSTRUMENT (--instrument):
     --no-room              bypass the X-Y room (measure with this; the room
                            hides flaws in the instrument model)
     --face <NAME>          wood | leather | felt                  [default: wood]
+    --roll <HZ>            restrike the --key list at this total rate,
+                           cycling through the keys (a 2-key list at 8 Hz
+                           = each hand at 4 Hz). 0 = strike once at t=0
+    --comp <0..1>          built-in compressor amount               [default: 0]
+                           (measurements are calibrated at 0, like the room)
     --sweep                render EVERY mapped key one file each,
                            key-<midi>.wav next to --out. ignores --key.
                            standard register-balance condition (Phase 10):
@@ -129,6 +134,10 @@ struct Args {
 
     // 楽器全体
     keys: Vec<u8>,
+    /// 0 より大きければ、--key のリストをこのレートで循環連打する (ロール)
+    roll: f64,
+    /// ビルトインコンプの効き量 (D-029)。測定の既定は 0 (off)
+    comp: f64,
     no_coupling: bool,
     raw: bool,
     no_room: bool,
@@ -183,6 +192,8 @@ impl Default for Args {
             t60_high: 0.8,
 
             keys: Vec::new(),
+            roll: 0.0,
+            comp: 0.0,
             no_coupling: false,
             raw: false,
             no_room: false,
@@ -426,6 +437,7 @@ fn render_instrument(args: &Args) -> Result<(Vec<Vec<Sample>>, String), String> 
     let mut engine = DulcimerEngine::with_config(args.sample_rate, 64, config);
     engine.set_strike_ratio(args.strike);
     engine.set_hammer_face(args.face);
+    engine.set_comp_amount(args.comp);
     if args.no_coupling {
         engine.set_bridge_coupling(0.0);
     }
@@ -436,15 +448,29 @@ fn render_instrument(args: &Args) -> Result<(Vec<Vec<Sample>>, String), String> 
 
     // --instrument の --vel は MIDI 的な 0–1 (--string の m/s とは違う)。
     let velocity = args.vel.clamp(0.0, 1.0);
-    for &key in &args.keys {
-        engine.note_on(key, velocity);
+    if args.roll <= 0.0 {
+        for &key in &args.keys {
+            engine.note_on(key, velocity);
+        }
     }
 
     let n = (args.dur * args.sample_rate).round() as usize;
     let mut left = vec![0.0 as Sample; n];
     let mut right = vec![0.0 as Sample; n];
+    // ロール: --key のリストを周期で循環連打する (2 鍵なら左右の手の交互)。
+    // タイミングはブロック粒度 (64 サンプル ≈ 1.3 ms) で十分。
+    let roll_period = args.sample_rate / args.roll.max(1e-9);
+    let mut next_strike = 0.0f64;
+    let mut strike_idx = 0usize;
     for start in (0..n).step_by(64) {
         let end = (start + 64).min(n);
+        if args.roll > 0.0 {
+            while next_strike < end as f64 {
+                engine.note_on(args.keys[strike_idx % args.keys.len()], velocity);
+                strike_idx += 1;
+                next_strike += roll_period;
+            }
+        }
         // 同じ Vec から 2 つの可変スライスは取れないので、いったん分ける。
         let mut l = [0.0 as Sample; 64];
         let mut r = [0.0 as Sample; 64];
@@ -701,6 +727,8 @@ fn parse_args(argv: Vec<String>) -> Result<Option<Args>, String> {
                     .map_err(|_| "--key は 0–127 です".to_string())?,
             ),
             "--no-coupling" => args.no_coupling = true,
+            "--roll" => args.roll = parse_f64(&value()?, "--roll")?,
+            "--comp" => args.comp = parse_f64(&value()?, "--comp")?,
             "--sweep" => args.sweep = true,
             "--layout" => args.layout = parse_layout(&value()?)?,
             "--temperament" => args.temperament = parse_temperament(&value()?)?,

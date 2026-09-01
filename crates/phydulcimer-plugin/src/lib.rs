@@ -377,6 +377,9 @@ impl<'a> PluginAudioProcessor<'a, PhyDulcimerShared, PhyDulcimerMainThread<'a>>
         // 同じブロックに来たとき、打鍵が古い打弦点を使ってしまう。
         self.engine
             .set_strike_ratio(self.shared.params.strike_position.load() as f64);
+        // ビルトインコンプの効き量も同様にブロック先頭で同期する (D-029)。
+        self.engine
+            .set_comp_amount(self.shared.params.comp.load() as f64);
 
         let mut block_peak = 0.0f32;
 
@@ -506,6 +509,8 @@ impl PhyDulcimerAudioProcessor<'_> {
                     .set_strike_ratio(self.shared.params.strike_position.load() as f64);
                 self.engine
                     .set_hammer_face(face_from_value(self.shared.params.hammer_face.load()));
+                self.engine
+                    .set_comp_amount(self.shared.params.comp.load() as f64);
                 // Layout / Temperament は再構築が要るので、ここでは変更を検出して
                 // ホストへ再 activate を頼むだけ (非対応ホストでは次の activate で
                 // 反映される)。

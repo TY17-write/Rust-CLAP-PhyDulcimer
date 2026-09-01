@@ -55,6 +55,7 @@ pub mod param_id {
     pub const MUTE: u32 = 9;
     pub const TEMPERAMENT: u32 = 10;
     pub const LAYOUT: u32 = 11;
+    pub const COMP: u32 = 12;
 }
 
 /// パラメータ 1 つの仕様。
