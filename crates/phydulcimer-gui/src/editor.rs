@@ -279,8 +279,14 @@ impl<H: EditorHost> Editor<H> {
             });
 
             // 右: 操作列。ステージと同じパラメータを別の形で。
+            //
+            // 幅 160px の狭い列なので、通常の slider (トラック 140 + 値 +
+            // ラベルの横一列) は入り切らずウィンドウ右端で見切れる (DAW 実機で
+            // 発覚)。ラベルを上に置くコンパクト版を使い、max_width も縛って
+            // 注記テキストを折り返させる。
             ui.vertical(|ui| {
                 ui.set_width(160.0);
+                ui.set_max_width(160.0);
                 let mut on = room_on;
                 if ui.checkbox(&mut on, "Room").changed() {
                     self.host
@@ -288,9 +294,9 @@ impl<H: EditorHost> Editor<H> {
                 }
                 ui.label(egui::RichText::new("Size").color(theme::DIM).small());
                 self.segmented(ui, param_id::ROOM_SIZE, &["S", "M", "L"]);
-                self.slider(ui, param_id::ABSORPTION, "Absorption");
-                self.slider(ui, param_id::MIC_DISTANCE, "Mic Distance");
-                self.slider(ui, param_id::XY_ANGLE, "X-Y Angle");
+                self.narrow_slider(ui, param_id::ABSORPTION, "Absorption");
+                self.narrow_slider(ui, param_id::MIC_DISTANCE, "Mic Distance");
+                self.narrow_slider(ui, param_id::XY_ANGLE, "X-Y Angle");
                 ui.add_space(6.0);
                 ui.label(
                     egui::RichText::new("Turn Room off when mixing with DAW reverb.")
@@ -360,6 +366,27 @@ impl<H: EditorHost> Editor<H> {
             .add(
                 egui::Slider::new(&mut value, spec.min..=spec.max)
                     .text(label)
+                    .suffix(&spec.unit)
+                    .fixed_decimals(spec.decimals),
+            )
+            .changed();
+        if changed {
+            self.host.set_param(id, value);
+        }
+    }
+
+    /// 狭い列用のスライダ: ラベルを上の行に置き、トラックを短くする。
+    ///
+    /// 通常の [`Self::slider`] は「トラック 140px + 値 + ラベル」が横一列で
+    /// 200px を超えるので、ROOM パネルの操作列 (160px) には入らない。
+    fn narrow_slider(&self, ui: &mut egui::Ui, id: u32, label: &str) {
+        ui.label(egui::RichText::new(label).color(theme::DIM).small());
+        let spec = self.spec(id).clone();
+        let mut value = self.host.param_value(id);
+        ui.spacing_mut().slider_width = 96.0;
+        let changed = ui
+            .add(
+                egui::Slider::new(&mut value, spec.min..=spec.max)
                     .suffix(&spec.unit)
                     .fixed_decimals(spec.decimals),
             )
