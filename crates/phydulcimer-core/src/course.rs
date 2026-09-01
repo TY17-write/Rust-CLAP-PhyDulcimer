@@ -186,6 +186,8 @@ pub struct Strike {
     pub strike_ratio: f64,
     /// 撥の面
     pub hammer: HammerParams,
+    /// 打撃ゲイン (面のラウドネス補償、[`crate::scaling::face_gain`])。1.0 で素通し
+    pub gain: f64,
 }
 
 /// 2 本の弦それぞれの区間へ打撃を配る。
@@ -199,6 +201,7 @@ pub fn strike_pair(segments: [&mut Segment; STRINGS_PER_COURSE], strike: &Strike
         if seg.hammer().params() != &strike.hammer {
             seg.set_hammer_params(strike.hammer);
         }
+        seg.set_strike_gain(strike.gain);
         let delay = if i == 0 { 0.0 } else { strike.second_delay_sec };
         seg.strike_delayed(strike.velocity_mps, delay);
     }
@@ -362,6 +365,7 @@ mod tests {
             second_delay_sec: 0.25e-3,
             strike_ratio: 0.09,
             hammer: HammerParams::wood(),
+            gain: 1.0,
         };
         strike_pair([&mut a, &mut b], &strike);
 

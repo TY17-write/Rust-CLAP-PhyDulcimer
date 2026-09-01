@@ -90,6 +90,8 @@ pub struct Instrument {
     strike_ratio: f64,
     /// 現在の撥 (面は [`Self::set_hammer_face`] で切り替わる)
     hammer: HammerParams,
+    /// 現在の面。ラウドネス補償 ([`crate::scaling::face_gain`]) の引数に使う
+    face: crate::hammer::HammerFace,
     /// パームミュート量 0–1。変更検出用 (適用は変わったときだけ)
     mute: f64,
     /// 打撃ばらつき用の PRNG (xorshift32)。オーディオスレッドで走るので自前
@@ -150,6 +152,7 @@ impl Instrument {
             treble,
             strike_ratio: 0.09,
             hammer: HammerParams::wood(),
+            face: crate::hammer::HammerFace::Wood,
             mute: 0.0,
             rng: 0x9E37_79B9,
         }
@@ -182,6 +185,7 @@ impl Instrument {
     /// ここは値の保存のみ (確保なし、RT 可)。
     pub fn set_hammer_face(&mut self, face: crate::hammer::HammerFace) {
         self.hammer = HammerParams::for_face(face);
+        self.face = face;
     }
 
     /// パームミュート量 0–1 (Phase 7)。鳴っている弦に即座に効く。
@@ -230,23 +234,31 @@ impl Instrument {
             second_delay_sec: self.next_spread(),
             strike_ratio: self.strike_ratio,
             hammer: self.hammer,
+            gain: 1.0,
         };
 
+        // 面のラウドネス補償は**打った区間の f0** で引く (P10 後半、D-026)。
+        // 左区間は右と別の f0 を持つので、コースゲインと違い位置ごとに決まる。
         match position.side {
             BridgeSide::Bass => {
                 let course = &mut self.bass[position.course];
+                let gain = crate::scaling::face_gain(self.face, course.strings[0].params().f0_hz);
                 let [a, b] = &mut course.strings;
-                strike_pair([a, b], &strike);
+                strike_pair([a, b], &Strike { gain, ..strike });
             }
             BridgeSide::TrebleRight => {
                 let course = &mut self.treble[position.course];
+                let gain =
+                    crate::scaling::face_gain(self.face, course.strings[0].right().params().f0_hz);
                 let [a, b] = &mut course.strings;
-                strike_pair([a.right_mut(), b.right_mut()], &strike);
+                strike_pair([a.right_mut(), b.right_mut()], &Strike { gain, ..strike });
             }
             BridgeSide::TrebleLeft => {
                 let course = &mut self.treble[position.course];
+                let gain =
+                    crate::scaling::face_gain(self.face, course.strings[0].left().params().f0_hz);
                 let [a, b] = &mut course.strings;
-                strike_pair([a.left_mut(), b.left_mut()], &strike);
+                strike_pair([a.left_mut(), b.left_mut()], &Strike { gain, ..strike });
             }
         }
     }
@@ -389,6 +401,19 @@ impl Instrument {
         })
     }
 
+    /// 検証用: 指定した鍵が叩く区間 (弦 1 本目) の現在の打撃ゲイン。
+    pub fn strike_gain_of(&self, key: u8) -> Option<f64> {
+        let idx = self.layout.preferred_index(key)?;
+        let position = self.layout.positions()[idx];
+        Some(match position.side {
+            BridgeSide::Bass => self.bass[position.course].strings[0].strike_gain(),
+            BridgeSide::TrebleRight => self.treble[position.course].strings[0]
+                .right()
+                .strike_gain(),
+            BridgeSide::TrebleLeft => self.treble[position.course].strings[0].left().strike_gain(),
+        })
+    }
+
     /// 検証用: トレブルコースの弦 1 本目の左区間の変位 (結合の観測)。
     pub fn treble_left_displacement(&self, course: usize) -> Option<Sample> {
         self.treble
@@ -419,6 +444,7 @@ fn position_of(layout: &Layout, side: BridgeSide, course: usize) -> &Position {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use approx::assert_relative_eq;
 
     const SR: f64 = 48_000.0;
 
@@ -736,6 +762,38 @@ mod tests {
             felt < wood * 0.7,
             "フェルト面で暗くならない: wood {wood:.3} vs felt {felt:.3}"
         );
+    }
+
+    #[test]
+    fn face_loudness_compensation_is_applied_at_note_on() {
+        // P10 後半 (D-026): 柔らかい面の打撃には face_gain の補償が掛かり、
+        // 木は素通し (1.0)。ゲインは打った区間の f0 で引かれる。
+        use crate::hammer::HammerFace;
+        let mut inst = Instrument::new(SR);
+
+        inst.note_on(79, 0.8); // G5 (トレブル右)
+        assert_relative_eq!(inst.strike_gain_of(79).unwrap(), 1.0, epsilon = 1e-12);
+
+        inst.set_hammer_face(HammerFace::Felt);
+        inst.note_on(79, 0.8);
+        let g5 = inst.string_params(79).unwrap().f0_hz;
+        let expected = crate::scaling::face_gain(HammerFace::Felt, g5);
+        assert!(expected > 5.0, "G5 のフェルト補償が小さすぎる: {expected}");
+        assert_relative_eq!(inst.strike_gain_of(79).unwrap(), expected, epsilon = 1e-12);
+
+        // 左専用鍵は左区間の f0 (右の 1.5 倍) で引かれる。
+        inst.note_on(86, 0.8); // D6 (トレブル左)
+        let d6 = inst.string_params(86).unwrap().f0_hz;
+        assert_relative_eq!(
+            inst.strike_gain_of(86).unwrap(),
+            crate::scaling::face_gain(HammerFace::Felt, d6),
+            epsilon = 1e-12
+        );
+
+        // 木に戻すと次の打撃から素通し。
+        inst.set_hammer_face(HammerFace::Wood);
+        inst.note_on(79, 0.8);
+        assert_relative_eq!(inst.strike_gain_of(79).unwrap(), 1.0, epsilon = 1e-12);
     }
 
     /// P4 の完了条件: 長時間の連続演奏で発散しない。

@@ -260,6 +260,12 @@ pub struct Segment {
     ///
     /// ブリッジ結合 (course) が反対区間への透過に使う。
     last_hammer_force: Sample,
+    /// 打撃ゲイン (面のラウドネス補償、Phase 10 後半)。1.0 で素通し。
+    ///
+    /// 注入する力を g 倍し、撥が見る弦変位を 1/g するので、撥と弦の接触の
+    /// 動力学は g = 1 と厳密に同じまま、この打撃の寄与だけが g 倍になる
+    /// (バンクは線形なので出力は正確に g 倍)。→ [`Self::set_strike_gain`]
+    strike_gain: f64,
 }
 
 impl Segment {
@@ -291,6 +297,7 @@ impl Segment {
             modes: 0,
             prev_displacement: 0.0,
             last_hammer_force: 0.0,
+            strike_gain: 1.0,
         };
         s.rebuild();
         s
@@ -330,6 +337,30 @@ impl Segment {
         self.hammer.set_params(params);
         // 撥の幅が励振重みに入るので作り直す。
         self.rebuild();
+    }
+
+    /// 打撃ゲイン (面のラウドネス補償) を設定する。**次の打撃から効く。**
+    ///
+    /// 係数の再構築は起きない (確保なし、RT 可)。値は
+    /// [`crate::scaling::face_gain`] の校正表から来る。
+    ///
+    /// # 等価変換であることについて
+    ///
+    /// 単に注入力を g 倍すると、弦が大きく動いて撥から早く「逃げ」、接触の
+    /// 動力学 (チャタリング・接触時間) が変わってしまう。ここでは撥が見る
+    /// 弦変位も 1/g するので、撥は g = 1 のときと**同一の**弦応答を見る。
+    /// バンクは線形なので、この打撃の寄与はちょうど g 倍で出る (音色不変)。
+    ///
+    /// 代償: 鳴っている弦を違うゲインで叩き直すとき、撥が見る既存振動の
+    /// 振幅が 1/g だけ食い違う (再打弦の相互作用の忠実度、微小 — D-026)。
+    pub fn set_strike_gain(&mut self, gain: f64) {
+        // 1/g を使うので 0 は許さない (校正表が 0 を返すことはない)。
+        self.strike_gain = gain.clamp(1.0e-6, 1.0e6);
+    }
+
+    /// 現在の打撃ゲイン。
+    pub fn strike_gain(&self) -> f64 {
+        self.strike_gain
     }
 
     /// 接触中のオーバーサンプル倍率を変える。1 以上。
@@ -423,7 +454,9 @@ impl Segment {
     /// 弦は 1 本目と完全同時には叩かれない (0–0.3 ms のばらつき) ので、
     /// それをここで表す。
     pub fn strike_delayed(&mut self, velocity_mps: f64, delay_sec: f64) {
-        let displacement = self.bank.displacement_at_strike() as f64;
+        // 撥は「1/g した弦変位」の座標系で動く (set_strike_gain 参照)。
+        // 出発位置も同じ座標系で取らないと出発の瞬間に圧縮が飛ぶ (D-016)。
+        let displacement = self.bank.displacement_at_strike() as f64 / self.strike_gain;
         let start = displacement - velocity_mps.max(0.0) * delay_sec.max(0.0);
         self.hammer.strike_at(velocity_mps, start);
         self.prev_displacement = displacement;
@@ -465,7 +498,8 @@ impl Segment {
         let mut force_acc = 0.0f64;
 
         for _ in 0..self.oversample {
-            let displacement = self.bank.displacement_at_strike() as f64;
+            // 撥が見る変位は 1/g (打撃ゲインの等価変換 — set_strike_gain 参照)。
+            let displacement = self.bank.displacement_at_strike() as f64 / self.strike_gain;
             // 速度は差分で作る。結合形の実部から作る手もあるが、
             // 差分のほうが「いま撥が見ている弦の動き」に素直に対応する。
             let velocity = (displacement - self.prev_displacement) / dt_os;
@@ -473,15 +507,18 @@ impl Segment {
 
             let force = self.hammer.step(displacement, velocity, dt_os);
             force_acc += force;
-            // ブリッジ駆動も接触中はオーバーサンプルレートで受ける
+            // 注入は g 倍。ブリッジ駆動も接触中はオーバーサンプルレートで受ける
             // (bridge_gain は dt_os で作ってあるのでスケールは合う)。
-            last =
-                self.bank
-                    .process_sample_bridged(force as Sample, bridge_drive, Rate::Oversampled);
+            last = self.bank.process_sample_bridged(
+                (force * self.strike_gain) as Sample,
+                bridge_drive,
+                Rate::Oversampled,
+            );
             acc += last;
         }
 
-        self.last_hammer_force = (force_acc / self.oversample as f64) as Sample;
+        // 反対区間への透過 (course) も g 倍された力を見る (共鳴も揃って動く)。
+        self.last_hammer_force = (force_acc * self.strike_gain / self.oversample as f64) as Sample;
 
         match self.decimation {
             Decimation::Drop => last,
@@ -921,6 +958,33 @@ mod tests {
             high / low
         };
         assert!(ratio(6.0) > ratio(0.5));
+    }
+
+    #[test]
+    fn strike_gain_scales_the_output_exactly() {
+        // 打撃ゲインは等価変換 (P10 後半): 接触の動力学は g = 1 と同一のまま、
+        // 出力だけが g 倍。g = 2 (2 の冪) なら浮動小数の丸めも等変で、
+        // サンプル単位でちょうど 2 倍になる (デノーマル対策の DC ぶんを除く)。
+        let mut a = segment();
+        let reference = render(&mut a, 2.0, 0.5);
+
+        let mut b = segment();
+        b.set_strike_gain(2.0);
+        let scaled = render(&mut b, 2.0, 0.5);
+
+        // 動力学が不変である証拠: 接触時間が一致する。
+        assert_relative_eq!(
+            a.hammer().contact_duration(),
+            b.hammer().contact_duration(),
+            max_relative = 1e-12
+        );
+        let peak = reference
+            .iter()
+            .fold(0.0f64, |m, &v| m.max((v as f64).abs()));
+        for (i, (&r, &s)) in reference.iter().zip(scaled.iter()).enumerate() {
+            let err = (s as f64 - 2.0 * r as f64).abs();
+            assert!(err <= peak * 1e-6 + 1e-12, "sample {i}: {s} != 2 x {r}");
+        }
     }
 
     #[test]

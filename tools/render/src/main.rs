@@ -40,6 +40,7 @@ INSTRUMENT (--instrument):
     --raw                  bypass soundboard+cabinet, output bridge force (A/B)
     --no-room              bypass the X-Y room (measure with this; the room
                            hides flaws in the instrument model)
+    --face <NAME>          wood | leather | felt                  [default: wood]
     --sweep                render EVERY mapped key one file each,
                            key-<midi>.wav next to --out. ignores --key.
                            standard register-balance condition (Phase 10):
@@ -424,6 +425,7 @@ fn render_instrument(args: &Args) -> Result<(Vec<Vec<Sample>>, String), String> 
     };
     let mut engine = DulcimerEngine::with_config(args.sample_rate, 64, config);
     engine.set_strike_ratio(args.strike);
+    engine.set_hammer_face(args.face);
     if args.no_coupling {
         engine.set_bridge_coupling(0.0);
     }
@@ -453,10 +455,11 @@ fn render_instrument(args: &Args) -> Result<(Vec<Vec<Sample>>, String), String> 
     }
 
     let note = format!(
-        "instrument  keys {:?}, vel {:.2}, strike {:.3}, coupling {}, room {}, output {}",
+        "instrument  keys {:?}, vel {:.2}, strike {:.3}, face {:?}, coupling {}, room {}, output {}",
         args.keys,
         velocity,
         args.strike,
+        args.face,
         if args.no_coupling { "OFF" } else { "on" },
         if args.no_room { "OFF" } else { "on (X-Y)" },
         if args.raw {
