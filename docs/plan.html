@@ -1198,6 +1198,7 @@ GUI は <code>egui</code> + <code>egui-baseview</code>、<strong>UI の文字は
       <li><strong>音域バランス (LUFS 校正)</strong> — 全鍵掃引をターゲット直線に載せるコースゲイン表 (D-021 / D-022)</li>
       <li><strong>撥の面のラウドネス補償</strong> — レザー/フェルトの音域依存の凹み (トレブルで 10–21 LU) を、打った区間の f0 で引く校正表で木と揃えた。励振の等価変換で音色不変 (D-026)</li>
       <li><strong>半音階に低音弦ブロック D#2–D#3 を追加</strong> — ブロンズ巻 13 コース、補正後は全 50 鍵が直線 ±0.79 LU (§03 参照)</li>
+      <li><strong>ビルトインコンプ (D-029)</strong> — 両手 (2 和音・ロール) の積み上がりを押さえて各打撃を浮き出させる。指標 (<code>render --roll</code> + <code>analyze --grain</code>) を先に作って校正: 粒立ち 8 Hz ロールで 6.7 → 8.7 dB。X-Y 保全のため両系統に同一ゲイン・ROOM 前。エンジン既定 off = 校正体系は不変、プラグインの <code>Comp</code> 既定 0.5 が演奏体験に乗せる</li>
     </ul></div>
   </div>
 </div>
