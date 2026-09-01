@@ -45,7 +45,7 @@ INSTRUMENT (--instrument):
                            key-<midi>.wav next to --out. ignores --key.
                            standard register-balance condition (Phase 10):
                              --sweep --dur 3.0 --vel 1.0 --no-room
-    --layout <NAME>        diatonic (15/14) | chromatic (E3-E6)  [default: diatonic]
+    --layout <NAME>        diatonic (15/14) | chromatic (D#2-E6) [default: diatonic]
                            also applies to --table and --sweep
     --temperament <NAME>   pure (2:3 bridge, +2c) | equal (12-TET fifth)
                                                               [default: pure]
@@ -755,7 +755,7 @@ fn parse_segment(s: &str) -> Result<SegmentKind, String> {
 fn parse_layout(s: &str) -> Result<LayoutKind, String> {
     match s {
         "diatonic" => Ok(LayoutKind::Diatonic1514),
-        "chromatic" => Ok(LayoutKind::ChromaticE3E6),
+        "chromatic" => Ok(LayoutKind::Chromatic),
         other => Err(format!("--layout は diatonic | chromatic です: {other}")),
     }
 }

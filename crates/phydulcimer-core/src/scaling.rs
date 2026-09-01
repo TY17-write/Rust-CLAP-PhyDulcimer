@@ -50,7 +50,7 @@ const BASS_SPEAKING_BOTTOM_M: f64 = 0.74;
 /// バス最高コースの発弦長 [m]。
 const BASS_SPEAKING_TOP_M: f64 = 0.30;
 
-/// 半音階配置 (E3–E6、Phase 7) のジオメトリ。
+/// 半音階配置 (E3–E6 部分、Phase 7) のジオメトリ。
 ///
 /// 一次資料の実測が無いので、**端の波速 `c = 2·L·f0` が 15/14 の同音域と
 /// 同程度になる**よう選んだ設計値。妥当性は published-ranges テスト
@@ -60,6 +60,38 @@ const CHROM_BASS_SPEAKING_BOTTOM_M: f64 = 0.55;
 const CHROM_BASS_SPEAKING_TOP_M: f64 = 0.32;
 const CHROM_TREBLE_TOTAL_BOTTOM_M: f64 = 0.72;
 const CHROM_TREBLE_TOTAL_TOP_M: f64 = 0.32;
+
+/// 半音階の低音弦ブロック (D#2–D#3、ブロンズ巻) のジオメトリ。
+///
+/// バスブリッジの下に継ぎ足す 13 コース。**E3–D#4 の既存ブロックとは
+/// 別の直線で補間する** — 1 本の直線で 25 コースを結ぶと既存ブロックの
+/// 弦長が変わり、確定済みの校正 (D-022 / D-026) が全部やり直しになる。
+///
+/// - 弦長: D#2 で 0.90 m (ツィンバロムのバス弦 0.9–1.2 m の範囲)、
+///   D#3 で 0.58 m (E3 の 0.55 m に滑らかに接続)
+/// - 芯線径: 0.60 → 0.56 mm (既存バスの 0.55 mm に接続。バスの芯線は
+///   トレブルよりやや太い、の写し)
+/// - 巻線: 全コースが `wrap_for` の応力目標から w ≈ 2.5–4.2 の巻線に
+///   なる — 実機のブロンズ (リン青銅) 巻に相当。モデル上、巻の材質は
+///   線密度にしか効かないので専用の材質定数は持たない (芯線は鋼のまま)
+const CHROM_BASS_EXT_SPEAKING_BOTTOM_M: f64 = 0.90;
+const CHROM_BASS_EXT_SPEAKING_TOP_M: f64 = 0.58;
+const CHROM_BASS_EXT_DIAMETER_LOW_M: f64 = 0.60e-3;
+const CHROM_BASS_EXT_DIAMETER_HIGH_M: f64 = 0.56e-3;
+
+/// 低音弦ブロック (バスブリッジの下の継ぎ足し) の設計文脈。
+///
+/// `courses` 本ぶんのバス低位コースが、既存バスとは別のジオメトリ直線で
+/// 補間される。[`DesignContext::bass_extension`] に入る。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BassExtension {
+    /// ブロックのコース数 (バスのコース 0..courses がこのブロック)
+    pub courses: usize,
+    pub speaking_bottom_m: f64,
+    pub speaking_top_m: f64,
+    pub diameter_low_m: f64,
+    pub diameter_high_m: f64,
+}
 
 /// トレブルブリッジの置き方 = 左区間の音律 (Phase 7)。
 ///
@@ -100,7 +132,8 @@ impl Temperament {
 pub struct DesignContext {
     pub bass_courses: usize,
     pub treble_courses: usize,
-    /// 音域位置 t (線径の補間) の範囲
+    /// 音域位置 t (線径の補間) の範囲。**低音弦ブロックは含めない**
+    /// (ブロックは自前の線径を持つ — [`BassExtension`])
     pub key_min: u8,
     pub key_max: u8,
     pub bass_speaking_bottom_m: f64,
@@ -108,36 +141,52 @@ pub struct DesignContext {
     pub treble_total_bottom_m: f64,
     pub treble_total_top_m: f64,
     pub temperament: Temperament,
+    /// 低音弦ブロック (バスのコース 0.. を別ジオメトリで)。15/14 は `None`
+    pub bass_extension: Option<BassExtension>,
 }
 
 impl DesignContext {
     /// 配置表と音律から文脈を組む。
     pub fn for_layout(layout: &crate::layout::Layout, temperament: Temperament) -> Self {
         use crate::layout::LayoutKind;
-        let (bass_bottom, bass_top, treble_bottom, treble_top) = match layout.kind() {
+        let (bass_bottom, bass_top, treble_bottom, treble_top, bass_extension) = match layout.kind()
+        {
             LayoutKind::Diatonic1514 => (
                 BASS_SPEAKING_BOTTOM_M,
                 BASS_SPEAKING_TOP_M,
                 TREBLE_TOTAL_BOTTOM_M,
                 TREBLE_TOTAL_TOP_M,
+                None,
             ),
-            LayoutKind::ChromaticE3E6 => (
+            LayoutKind::Chromatic => (
                 CHROM_BASS_SPEAKING_BOTTOM_M,
                 CHROM_BASS_SPEAKING_TOP_M,
                 CHROM_TREBLE_TOTAL_BOTTOM_M,
                 CHROM_TREBLE_TOTAL_TOP_M,
+                Some(BassExtension {
+                    courses: crate::layout::CHROMATIC_BASS_EXT_COURSES,
+                    speaking_bottom_m: CHROM_BASS_EXT_SPEAKING_BOTTOM_M,
+                    speaking_top_m: CHROM_BASS_EXT_SPEAKING_TOP_M,
+                    diameter_low_m: CHROM_BASS_EXT_DIAMETER_LOW_M,
+                    diameter_high_m: CHROM_BASS_EXT_DIAMETER_HIGH_M,
+                }),
             ),
         };
+        // 音域位置 t の範囲は低音弦ブロックを含めない — ブロック追加で
+        // 既存の弦の線径 (と確定済みの校正) が動いてはいけない。
+        // ブロックは半音間隔なのでコース数 = 半音数。
+        let key_min = layout.key_min() + bass_extension.map_or(0, |e| e.courses as u8);
         Self {
             bass_courses: layout.bass_courses(),
             treble_courses: layout.treble_courses(),
-            key_min: layout.key_min(),
+            key_min,
             key_max: layout.key_max(),
             bass_speaking_bottom_m: bass_bottom,
             bass_speaking_top_m: bass_top,
             treble_total_bottom_m: treble_bottom,
             treble_total_top_m: treble_top,
             temperament,
+            bass_extension,
         }
     }
 }
@@ -287,7 +336,7 @@ fn interp_db_anchors(anchors: &[(f64, f64)], f_hz: f64) -> f64 {
         .unwrap_or(anchors[anchors.len() - 1].1)
 }
 
-/// 半音階配置 (E3–E6) のコースゲイン補正 [dB] (Phase 7、D-022)。
+/// 半音階配置 (D#2–E6) のコースゲイン補正 [dB] (Phase 7、D-022)。
 ///
 /// **15/14 の校正表 ([`COURSE_GAIN_ANCHORS_DB`]) の上に重ねる差分。**
 /// 15/14 表は系統的な傾き (響板 tilt・箱・ブリッジ重み) を近似的に写すが、
@@ -295,7 +344,24 @@ fn interp_db_anchors(anchors: &[(f64, f64)], f_hz: f64) -> f64 {
 /// (2026-08-31 の掃引、ff・3 s・ROOM off)。この表はその残差の打ち消しで、
 /// **アンカー = 各コースの右側 f0** (ゲインはコース周波数でしか引かれない
 /// ので実質ルックアップ)。共有コース対 (75↔82 等) は残差を折半した。
+///
+/// 77.78–155.56 Hz の 13 点は低音弦ブロック D#2–D#3 (P10 で追加) の校正
+/// (2026-09-01 の掃引)。15/14 表は 98 Hz 未満で端の値に張り付くので、
+/// 最低域の系統誤差 (−5 LU 前後) もこの差分が受ける。
 const CHROMATIC_GAIN_CORRECTION_DB: &[(f64, f64)] = &[
+    (77.78, 4.4),
+    (82.41, 5.1),
+    (87.31, 4.4),
+    (92.50, 2.0),
+    (98.00, -1.9),
+    (103.83, -1.6),
+    (110.00, -3.3),
+    (116.54, -2.2),
+    (123.47, -0.9),
+    (130.81, -1.9),
+    (138.59, -2.9),
+    (146.83, -2.3),
+    (155.56, 0.3),
     (164.81, 0.0),
     (174.61, -0.6),
     (185.00, -1.1),
@@ -441,7 +507,7 @@ pub fn course_gain_for(layout: crate::layout::LayoutKind, course_f0_hz: f64) -> 
     let base_db = interp_db_anchors(COURSE_GAIN_ANCHORS_DB, course_f0_hz);
     let db = match layout {
         crate::layout::LayoutKind::Diatonic1514 => base_db,
-        crate::layout::LayoutKind::ChromaticE3E6 => {
+        crate::layout::LayoutKind::Chromatic => {
             base_db + interp_db_anchors(CHROMATIC_GAIN_CORRECTION_DB, course_f0_hz)
         }
     };
@@ -471,13 +537,29 @@ pub fn design_position_with(
     };
     match position.side {
         BridgeSide::Bass => {
-            let t = position.course as f64 / (ctx.bass_courses - 1) as f64;
-            let speaking = lerp(ctx.bass_speaking_bottom_m, ctx.bass_speaking_top_m, t);
+            // 低音弦ブロック (ブロンズ巻、コース 0..ext.courses) は別直線。
+            let ext = ctx
+                .bass_extension
+                .filter(|e| position.course < e.courses && e.courses > 1);
+            let (speaking, diameter) = if let Some(e) = ext {
+                let t = position.course as f64 / (e.courses - 1) as f64;
+                (
+                    lerp(e.speaking_bottom_m, e.speaking_top_m, t),
+                    lerp(e.diameter_low_m, e.diameter_high_m, t),
+                )
+            } else {
+                let skip = ctx.bass_extension.map_or(0, |e| e.courses);
+                let t = (position.course - skip) as f64 / (ctx.bass_courses - skip - 1) as f64;
+                (
+                    lerp(ctx.bass_speaking_bottom_m, ctx.bass_speaking_top_m, t),
+                    diameter_at(register(position.midi)),
+                )
+            };
             let f0 = key_to_hz(position.midi);
             let design = StringDesign {
                 speaking_m: speaking,
                 f0_hz: f0,
-                diameter_m: diameter_at(register(position.midi)),
+                diameter_m: diameter,
                 wrap: wrap_for(speaking, f0),
             };
             (design, damping_for_course(f0))
@@ -642,9 +724,53 @@ mod tests {
     #[test]
     fn chromatic_strings_are_within_published_ranges() {
         // P7: 半音階配置も同じ文献範囲に入ること (ジオメトリ設計値の外部基準)。
-        let layout = Layout::chromatic_e3_e6();
+        // 低音弦ブロック (D#2–D#3) も同じ範囲で縛る (P10)。
+        let layout = Layout::chromatic();
         let ctx = DesignContext::for_layout(&layout, Temperament::PureFifth);
         assert_published_ranges(&layout, &ctx);
+    }
+
+    #[test]
+    fn the_chromatic_bass_extension_is_bronze_wound_and_leaves_the_old_block_alone() {
+        // P10: 低音弦ブロックは全コースが巻線 (ブロンズ巻の写し)。
+        // 既存ブロック (E3–D#4) の設計はブロック追加の前後で変わらない —
+        // 確定済みの校正 (D-022) を壊さないための不変条件。
+        use crate::layout::CHROMATIC_BASS_EXT_COURSES;
+        let layout = Layout::chromatic();
+        let ctx = DesignContext::for_layout(&layout, Temperament::PureFifth);
+
+        for p in layout
+            .positions()
+            .iter()
+            .filter(|p| p.side == BridgeSide::Bass && p.course < CHROMATIC_BASS_EXT_COURSES)
+        {
+            let (design, _) = design_position_with(p, &ctx);
+            assert!(
+                design.wrap > 1.25,
+                "{} が巻線になっていない: w = {:.2}",
+                crate::layout::note_name(p.midi),
+                design.wrap
+            );
+        }
+
+        // E3 (既存ブロックの最低音、ブロック追加前のコース 0) の設計値の固定。
+        let e3 = layout
+            .positions()
+            .iter()
+            .find(|p| p.side == BridgeSide::Bass && p.midi == 52)
+            .unwrap();
+        let (design, _) = design_position_with(e3, &ctx);
+        assert_relative_eq!(design.speaking_m, 0.55, epsilon = 1e-12);
+        assert_relative_eq!(design.diameter_m, 0.55e-3, epsilon = 1e-12);
+
+        // ブロックの弦長は E3 に向かって滑らかに縮む (D#3 = 0.58 m)。
+        let d3 = layout
+            .positions()
+            .iter()
+            .find(|p| p.side == BridgeSide::Bass && p.midi == 51)
+            .unwrap();
+        let (d3_design, _) = design_position_with(d3, &ctx);
+        assert!(d3_design.speaking_m > design.speaking_m);
     }
 
     #[test]

@@ -99,7 +99,7 @@ fn the_chromatic_layout_sits_on_its_own_target_line() {
     use phydulcimer_core::instrument::InstrumentConfig;
     use phydulcimer_core::layout::LayoutKind;
     let config = InstrumentConfig {
-        layout: LayoutKind::ChromaticE3E6,
+        layout: LayoutKind::Chromatic,
         ..InstrumentConfig::default()
     };
 

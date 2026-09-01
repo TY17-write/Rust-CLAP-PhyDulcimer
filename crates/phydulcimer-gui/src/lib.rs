@@ -35,8 +35,8 @@ pub use editor::Editor;
 /// エディタウィンドウの既定サイズ [px]。デザイン (Artifact) の 960x640。
 pub const DEFAULT_EDITOR_SIZE: (u32, u32) = (960, 640);
 
-/// 鍵盤に描く鍵域 (両配置の合併): G2 〜 E6。
-pub const KEY_MIN: u8 = 43;
+/// 鍵盤に描く鍵域 (両配置の合併): D#2 〜 E6 (半音階の低音弦ブロック込み)。
+pub const KEY_MIN: u8 = 39;
 pub const KEY_MAX: u8 = 88;
 
 /// パラメータ ID。
@@ -90,7 +90,7 @@ pub trait EditorHost {
     /// その鍵が鳴らされた回数 (音声スレッドが増やすシリアル)。
     /// GUI は毎フレーム差分を見てグローを開始する。
     fn strike_serial(&self, key: u8) -> u32;
-    /// エンジンに**適用済み**の配置 (0 = Diatonic 15/14, 1 = Chromatic E3-E6)。
+    /// エンジンに**適用済み**の配置 (0 = Diatonic 15/14, 1 = Chromatic D#2-E6)。
     /// パラメータ現在値と食い違っている間は "applies on restart" を出す。
     fn active_layout(&self) -> u32;
     /// エンジンに適用済みの音律 (0 = Pure Fifth, 1 = Equal)。

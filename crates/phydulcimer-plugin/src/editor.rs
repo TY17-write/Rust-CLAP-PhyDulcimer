@@ -412,7 +412,7 @@ mod tests {
         host.request_reload();
 
         let engine = host.shared.engine_swap.lock().unwrap().take().unwrap();
-        assert_eq!(engine.config().layout, LayoutKind::ChromaticE3E6);
+        assert_eq!(engine.config().layout, LayoutKind::Chromatic);
     }
 
     #[test]

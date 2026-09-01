@@ -48,7 +48,7 @@ impl<H: EditorHost> Editor<H> {
             specs,
             layouts: [
                 Layout::of(LayoutKind::Diatonic1514),
-                Layout::of(LayoutKind::ChromaticE3E6),
+                Layout::of(LayoutKind::Chromatic),
             ],
             last_serials,
             glow_start: [-1.0; 128],
@@ -156,7 +156,11 @@ impl<H: EditorHost> Editor<H> {
             ui.separator();
 
             ui.label(egui::RichText::new("LAYOUT").color(theme::DIM).small());
-            self.segmented(ui, param_id::LAYOUT, &["Diatonic 15/14", "Chromatic E3-E6"]);
+            self.segmented(
+                ui,
+                param_id::LAYOUT,
+                &["Diatonic 15/14", "Chromatic D#2-E6"],
+            );
             ui.label(egui::RichText::new("TUNING").color(theme::DIM).small());
             self.segmented(ui, param_id::TEMPERAMENT, &["Pure Fifth", "Equal"]);
 

@@ -147,7 +147,8 @@ pub const PARAMS: &[ParamSpec] = &[
     },
     ParamSpec {
         id: id::LAYOUT,
-        // 0 = Diatonic 15/14 (G2-D6, 27 音)、1 = Chromatic E3-E6 (37 音)。
+        // 0 = Diatonic 15/14 (G2-D6, 27 音)、1 = Chromatic D#2-E6 (50 音、
+        // ブロンズ巻低音弦ブロック込み)。
         // 弦バンクの再構築を伴うので **activate 時に適用** (Phase 7)。
         name: b"Layout",
         min: 0.0,

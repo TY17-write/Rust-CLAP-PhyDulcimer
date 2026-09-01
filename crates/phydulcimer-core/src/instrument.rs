@@ -13,7 +13,8 @@
 //! # 構成 (Phase 4、配置の切り替えは Phase 7)
 //!
 //! - 発音位置は [`Layout`](crate::layout::Layout) の表から。既定は 15/14
-//!   標準配置 (44 位置)、[`InstrumentConfig`] で E3–E6 半音階 (48 位置) も選べる
+//!   標準配置 (44 位置)、[`InstrumentConfig`] で D#2–E6 半音階 (61 位置、
+//!   ブロンズ巻低音弦ブロック込み) も選べる
 //! - **コースあたり 2 本の弦** ([`course`](crate::course))。2 本目は +1〜2 cent
 //!   デチューンされ、打撃は 0–0.3 ms ばらつく → うなりと立ち上がりの厚み
 //! - **トレブルの弦はブリッジをまたぐ 2 区間が結合している**
@@ -22,7 +23,7 @@
 //!   半音階配置で解消)
 //!
 //! 区間の総数 (15/14): バス 14 コース × 2 本 + トレブル 15 コース × 2 本 ×
-//! 2 区間 = **88** (半音階は 12 + 18 コースで 96)。
+//! 2 区間 = **88** (半音階は 25 + 18 コースで 122)。
 //!
 //! # まだ無いもの
 //!
@@ -158,7 +159,7 @@ impl Instrument {
         }
     }
 
-    /// 発音位置の数 (15/14 で 44、半音階で 48)。
+    /// 発音位置の数 (15/14 で 44、半音階で 61)。
     pub fn string_count(&self) -> usize {
         self.layout.positions().len()
     }
@@ -711,14 +712,15 @@ mod tests {
     #[test]
     fn the_chromatic_instrument_plays_the_semitones() {
         // P7: 半音階配置。15/14 では無音の G#4 (68) が鳴り、最高音 E6 (88) も鳴る。
+        // P10: 低音弦ブロックの最低音 D#2 (39) も鳴る。
         let config = InstrumentConfig {
-            layout: LayoutKind::ChromaticE3E6,
+            layout: LayoutKind::Chromatic,
             ..InstrumentConfig::default()
         };
         let mut inst = Instrument::with_config(SR, config);
-        assert_eq!(inst.string_count(), 48);
+        assert_eq!(inst.string_count(), 61);
 
-        for key in [68u8, 52, 88] {
+        for key in [68u8, 52, 88, 39, 45] {
             inst.reset();
             inst.note_on(key, 0.8);
             let x = render(&mut inst, 0.3);

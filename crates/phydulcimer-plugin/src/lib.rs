@@ -112,7 +112,7 @@ fn face_from_value(value: f32) -> HammerFace {
 pub(crate) fn config_from_params(params: &ParamValues) -> InstrumentConfig {
     InstrumentConfig {
         layout: if params.layout.load() >= 0.5 {
-            LayoutKind::ChromaticE3E6
+            LayoutKind::Chromatic
         } else {
             LayoutKind::Diatonic1514
         },
@@ -269,7 +269,7 @@ impl PluginShared<'_> for PhyDulcimerShared {}
 fn layout_code(layout: LayoutKind) -> u32 {
     match layout {
         LayoutKind::Diatonic1514 => 0,
-        LayoutKind::ChromaticE3E6 => 1,
+        LayoutKind::Chromatic => 1,
     }
 }
 
@@ -777,7 +777,7 @@ impl PluginMainThreadParams for PhyDulcimerMainThread<'_> {
         }
         if id == params::id::LAYOUT {
             let name = if value >= 0.5 {
-                "Chromatic E3-E6"
+                "Chromatic D#2-E6"
             } else {
                 "Diatonic 15/14"
             };
@@ -824,7 +824,8 @@ impl PluginMainThreadParams for PhyDulcimerMainThread<'_> {
         if id == params::id::LAYOUT {
             return match text.to_ascii_lowercase().as_str() {
                 "diatonic 15/14" | "diatonic" | "d" | "0" => Some(0.0),
-                "chromatic e3-e6" | "chromatic" | "c" | "1" => Some(1.0),
+                // "chromatic e3-e6" は低音弦ブロック追加前の表示名 (後方互換)。
+                "chromatic d#2-e6" | "chromatic e3-e6" | "chromatic" | "c" | "1" => Some(1.0),
                 _ => None,
             };
         }
@@ -909,7 +910,7 @@ mod tests {
         // GUI 側は「パラメータの丸め値 == active_*」でチップを判定するので、
         // 符号化はパラメータの 0/1 とずれてはいけない。
         assert_eq!(layout_code(LayoutKind::Diatonic1514), 0);
-        assert_eq!(layout_code(LayoutKind::ChromaticE3E6), 1);
+        assert_eq!(layout_code(LayoutKind::Chromatic), 1);
         assert_eq!(temperament_code(Temperament::PureFifth), 0);
         assert_eq!(temperament_code(Temperament::Equal12), 1);
         // 既定状態ではチップが出ない (active == パラメータ既定値)。

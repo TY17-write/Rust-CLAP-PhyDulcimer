@@ -315,13 +315,14 @@ mod tests {
         assert!(peak > 0.3, "全打鍵なのに小さすぎる: {peak}");
     }
 
-    /// P7: 半音階配置 (48 位置) でもヘッドルームが保たれること。
+    /// P7: 半音階配置 (61 位置、低音弦ブロック込み) でもヘッドルームが
+    /// 保たれること。
     #[test]
     fn chromatic_all_positions_ff_stay_within_full_scale() {
         use crate::instrument::InstrumentConfig;
         use crate::layout::LayoutKind;
         let config = InstrumentConfig {
-            layout: LayoutKind::ChromaticE3E6,
+            layout: LayoutKind::Chromatic,
             ..InstrumentConfig::default()
         };
         let mut e = DulcimerEngine::with_config(SR, BLOCK, config);

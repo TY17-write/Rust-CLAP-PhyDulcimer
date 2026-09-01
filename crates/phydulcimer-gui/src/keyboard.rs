@@ -1,6 +1,7 @@
 //! 鍵盤ウィジェット — 鳴る鍵の色分けと打鍵グロー (承認済みデザイン)。
 //!
-//! - G2 (43) 〜 E6 (88) のフルクロマチック 46 鍵 (白鍵 27 本) を常に描く
+//! - D#2 (39) 〜 E6 (88) のフルクロマチック 50 鍵 (白鍵 29 本) を常に描く
+//!   (下端の 4 鍵は半音階の低音弦ブロックのぶん。15/14 では暗く沈む)
 //! - 鍵下端のバンド色 = その鍵を鳴らすブリッジ
 //!   (バス = 赤 / トレブル右 = 橙 / トレブル左 = 黄 — 暖色の類似色ランプ)
 //! - 配置に無い鍵は暗く沈める (描かないのではなく「無い」ことを見せる)
@@ -15,8 +16,8 @@ use phydulcimer_core::layout::{BridgeSide, Layout};
 use crate::theme;
 use crate::{KEY_MAX, KEY_MIN};
 
-/// 白鍵の本数 (43..=88)。
-pub const WHITE_COUNT: usize = 27;
+/// 白鍵の本数 (39..=88)。
+pub const WHITE_COUNT: usize = 29;
 
 /// 黒鍵の白鍵に対する幅・高さの比。
 const BLACK_W: f32 = 0.62;
@@ -197,10 +198,10 @@ mod tests {
     }
 
     #[test]
-    fn the_range_has_27_white_keys() {
+    fn the_range_has_29_white_keys() {
         let whites = (KEY_MIN..=KEY_MAX).filter(|&k| !is_black(k)).count();
         assert_eq!(whites, WHITE_COUNT);
-        // 最後の白鍵のインデックスは 26。
+        // 最後の白鍵のインデックスは 28。
         assert_eq!(white_index(KEY_MAX), WHITE_COUNT - 1);
     }
 
@@ -216,20 +217,23 @@ mod tests {
             assert_eq!(bank_color(&diatonic, key), None, "key {key}");
         }
 
-        let chromatic = Layout::of(LayoutKind::ChromaticE3E6);
-        // 半音階では G#4 も E6 も鳴る。範囲外の G2 は鳴らない。
+        let chromatic = Layout::of(LayoutKind::Chromatic);
+        // 半音階では G#4 も E6 も鳴り、低音弦ブロックの D#2/G2 も鳴る (バス色)。
         assert!(bank_color(&chromatic, 68).is_some());
         assert!(bank_color(&chromatic, 88).is_some());
-        assert_eq!(bank_color(&chromatic, 43), None);
+        assert_eq!(bank_color(&chromatic, 39), Some(theme::BANK_BASS));
+        assert_eq!(bank_color(&chromatic, 43), Some(theme::BANK_BASS));
+        // 15/14 では低音弦ブロックの鍵域は沈む。
+        assert_eq!(bank_color(&diatonic, 39), None);
     }
 
     #[test]
     fn black_keys_sit_on_white_key_boundaries() {
         let rect = board();
-        // G#2 (44) は G2 と A2 の境界 (白鍵 1 本目の左端) をまたぐ。
+        // G#2 (44) は G2 と A2 の境界 (前に白鍵 3 本 = E2, F2, G2) をまたぐ。
         let g_sharp = key_rect(44, rect);
         let ww = rect.width() / WHITE_COUNT as f32;
-        let boundary = rect.left() + ww;
+        let boundary = rect.left() + 3.0 * ww;
         assert!((g_sharp.center().x - boundary).abs() < 0.01);
         assert!(g_sharp.height() < rect.height());
     }

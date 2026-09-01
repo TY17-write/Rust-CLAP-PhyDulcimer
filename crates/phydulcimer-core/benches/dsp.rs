@@ -62,13 +62,14 @@ fn bench_instrument(c: &mut Criterion) {
         });
     });
 
-    // P7: 半音階配置 (48 位置) の最悪ケース。15/14 比 +9% の実コストを
-    // P8 の予算 (25%) に対して数値で残す。
-    group.bench_function("engine/chromatic48/block64", |b| {
+    // P7/P10: 半音階配置 (61 位置、低音弦ブロック込み) の最悪ケース。
+    // 低音弦は反射が遅く撥のチャタリング (16 倍 OS 区間) が伸びるので、
+    // 15/14 よりだいぶ重い。削るなら P8 の active スキップ。
+    group.bench_function("engine/chromatic61/block64", |b| {
         use phydulcimer_core::instrument::InstrumentConfig;
         use phydulcimer_core::layout::LayoutKind;
         let config = InstrumentConfig {
-            layout: LayoutKind::ChromaticE3E6,
+            layout: LayoutKind::Chromatic,
             ..InstrumentConfig::default()
         };
         let mut engine = DulcimerEngine::with_config(SR, BLOCK, config);

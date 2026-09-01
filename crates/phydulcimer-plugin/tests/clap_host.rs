@@ -632,7 +632,7 @@ fn layout_parameter_applies_at_the_next_activate() {
         peak(&l1)
     );
 
-    // render #2: 半音階 E3–E6。G#4 も E6 (88) も鳴る。
+    // render #2: 半音階 D#2–E6。G#4 も E6 (88) も鳴る。
     let (l2, _) = rig.render(20, |b, ev| {
         if b == 0 {
             push_note_on(ev, 0, 68, 0.9);

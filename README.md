@@ -65,8 +65,9 @@ Phase 9 から GUI (egui + egui-baseview) が入り、依存が ~130 crate 増�
 - 鍵域は既定で **G2–D6 (MIDI 43–86)** の**全音階配置** (G / D メジャー)。
   実機どおり半音の欠落があり、**G#・Bb・D#・F などの鍵は鳴らない**
   ([D-017](docs/problems.md))。C#5 / C#6 だけは存在する。
-  `Layout` パラメータで **E3–E6 半音階 37 音** (クロマチックダルシマー) に
-  切り替えられる (弦バンクの再構築を伴うので**次の activate から**効く)
+  `Layout` パラメータで **D#2–E6 半音階 50 音** (クロマチックダルシマー +
+  ブロンズ巻低音弦ブロック D#2–D#3) に切り替えられる (弦バンクの再構築を
+  伴うので**次の activate から**効く)
 - 同じ音高が複数の位置にあるときは最も長い区間 (バス → トレブル右 → 左) を叩く
 - トレブル左にしか無い音 (15/14 では C#5, A5, B5, C#6, D6) は純正5度の帰結で
   **+2 cent**。`Temperament = Equal` でブリッジを僅かに動かし平均律に乗せられる
@@ -77,7 +78,7 @@ Phase 9 から GUI (egui + egui-baseview) が入り、依存が ~130 crate 増�
   `X-Y Angle` (60–135°) / `Room Size` (S/M/L) / `Wall Absorption` /
   `Hammer Face` (Wood/Leather/Felt、次の打撃から) /
   `Mute` (パームミュート 0–1、鳴っている弦に即効く) /
-  `Temperament` (Pure Fifth/Equal) / `Layout` (Diatonic 15/14 / Chromatic E3-E6)
+  `Temperament` (Pure Fifth/Equal) / `Layout` (Diatonic 15/14 / Chromatic D#2-E6)
 - **ROOM は X-Y ステレオの模倣**: L/R に時間差を作らない (定位はレベル差だけ)。
   DAW 側で空間を作るときは `Room = Off`。**音質の判断も必ず Off で**
 

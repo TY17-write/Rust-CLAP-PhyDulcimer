@@ -61,9 +61,16 @@ pub enum LayoutKind {
     /// 15/14 全音階 (5度間隔チューニング)。44 位置・27 音高、G2–D6
     #[default]
     Diatonic1514,
-    /// E3–E6 半音階 37 音 (クロマチックダルシマー)。48 位置
-    ChromaticE3E6,
+    /// D#2–E6 半音階 50 音 (クロマチックダルシマー + ブロンズ巻低音弦
+    /// ブロック)。61 位置
+    Chromatic,
 }
+
+/// 半音階配置の低音弦ブロック (D#2–D#3) のコース数。
+///
+/// バスブリッジの下に継ぎ足す**ブロンズ巻**の 13 コース。ジオメトリが
+/// E3–D#4 の既存ブロックと別なので、`scaling` はこの数で設計則を切り替える。
+pub const CHROMATIC_BASS_EXT_COURSES: usize = 13;
 
 /// メジャースケールの隣接音程 [半音]。
 const MAJOR_STEPS: [u8; 7] = [2, 2, 1, 2, 2, 2, 1];
@@ -152,7 +159,7 @@ impl Layout {
     pub fn of(kind: LayoutKind) -> Self {
         match kind {
             LayoutKind::Diatonic1514 => Self::standard_15_14(),
-            LayoutKind::ChromaticE3E6 => Self::chromatic_e3_e6(),
+            LayoutKind::Chromatic => Self::chromatic(),
         }
     }
 
@@ -169,23 +176,26 @@ impl Layout {
         )
     }
 
-    /// E3–E6 の半音階配置 (37 音、クロマチックダルシマー)。
+    /// D#2–E6 の半音階配置 (50 音、クロマチックダルシマー)。
     ///
+    /// - バス低音弦ブロック: D#2 (39)–D#3 (51) を半音間隔 13 コース
+    ///   (**ブロンズ巻**。ジオメトリが別 — `scaling` の `BassExtension`)
     /// - バス: E3 (52)–D#4 (63) を半音間隔 12 コース
     /// - トレブル右: E4 (64)–A5 (81) を半音間隔 18 コース
     /// - トレブル左: +7 半音 → B4 (71)–E6 (88)
     ///
     /// **半音列の +7 半音は半音列のまま**なので、共有弦の制約 (左 = 右の
-    /// 5 度上) を保ったまま E3–E6 の 37 音が隙間なく埋まる。重複域
+    /// 5 度上) を保ったまま D#2–E6 の 50 音が隙間なく埋まる。重複域
     /// (B4–A5) は先勝ち規則で右側 (長い区間) が優先される。
     ///
     /// 実機のクロマチック (Dusty Strings Chromatic 系) はブリッジの追加で
     /// 半音を得るが、本モデルは plan.html §配置のとおり「同じ設計則で
-    /// 3 バンクに割り付ける」理想化 (D-017 の解消)。
-    pub fn chromatic_e3_e6() -> Self {
-        let bass: Vec<u8> = (52..=63).collect();
+    /// 3 バンクに割り付ける」理想化 (D-017 の解消)。低音弦ブロックは
+    /// ツィンバロムのバス弦群に相当する拡張。
+    pub fn chromatic() -> Self {
+        let bass: Vec<u8> = (39..=63).collect();
         let right: Vec<u8> = (64..=81).collect();
-        Self::from_tables(LayoutKind::ChromaticE3E6, &bass, &right)
+        Self::from_tables(LayoutKind::Chromatic, &bass, &right)
     }
 
     /// 配置の種類。
@@ -321,23 +331,42 @@ mod tests {
     }
 
     #[test]
-    fn the_chromatic_layout_covers_e3_to_e6_without_gaps() {
-        // P7: 半音階配置。E3 (52)–E6 (88) の 37 音がすべて鳴る。
-        let l = Layout::chromatic_e3_e6();
-        assert_eq!(l.positions().len(), 48);
-        assert_eq!((l.key_min(), l.key_max()), (52, 88));
-        for key in 52..=88u8 {
+    fn the_chromatic_layout_covers_d_sharp_2_to_e6_without_gaps() {
+        // P7: 半音階配置 (P10 で低音弦ブロックを追加)。
+        // D#2 (39)–E6 (88) の 50 音がすべて鳴る。
+        let l = Layout::chromatic();
+        assert_eq!(l.positions().len(), 61);
+        assert_eq!((l.key_min(), l.key_max()), (39, 88));
+        for key in 39..=88u8 {
             assert!(l.is_mapped(key), "{} が無い", note_name(key));
         }
         // 範囲外は無音。
-        assert!(!l.is_mapped(51));
+        assert!(!l.is_mapped(38));
         assert!(!l.is_mapped(89));
+    }
+
+    #[test]
+    fn the_chromatic_bass_extension_sits_below_the_original_block() {
+        // 低音弦ブロック D#2–D#3 はバスのコース 0–12、E3 はコース 13。
+        let l = Layout::chromatic();
+        assert_eq!(l.bass_courses(), 25);
+        let bass_midi = |course: usize| {
+            l.positions()
+                .iter()
+                .find(|p| p.side == BridgeSide::Bass && p.course == course)
+                .unwrap()
+                .midi
+        };
+        assert_eq!(bass_midi(0), 39); // D#2
+        assert_eq!(bass_midi(CHROMATIC_BASS_EXT_COURSES - 1), 51); // D#3
+        assert_eq!(bass_midi(CHROMATIC_BASS_EXT_COURSES), 52); // E3 (既存ブロック)
+        assert_eq!(bass_midi(24), 63); // D#4
     }
 
     #[test]
     fn the_chromatic_left_side_is_seven_semitones_above_the_right() {
         // 共有弦の制約: 左は常に右 +7 半音 (半音列なので左も半音列になる)。
-        let l = Layout::chromatic_e3_e6();
+        let l = Layout::chromatic();
         for course in 0..l.treble_courses() {
             let find = |side: BridgeSide| {
                 l.positions()
@@ -356,7 +385,7 @@ mod tests {
     #[test]
     fn chromatic_duplicates_prefer_the_longest_segment() {
         // 重複域 B4–A5 (71–81) は右側 (長い区間) が優先。
-        let l = Layout::chromatic_e3_e6();
+        let l = Layout::chromatic();
         for key in 71..=81u8 {
             let p = l.positions()[l.preferred_index(key).unwrap()];
             assert_eq!(p.side, BridgeSide::TrebleRight, "{}", note_name(key));
@@ -371,7 +400,7 @@ mod tests {
     #[test]
     fn layout_of_matches_the_constructors() {
         assert_eq!(Layout::of(LayoutKind::Diatonic1514).positions().len(), 44);
-        assert_eq!(Layout::of(LayoutKind::ChromaticE3E6).positions().len(), 48);
+        assert_eq!(Layout::of(LayoutKind::Chromatic).positions().len(), 61);
         // 15/14 のフィールド化した値が既存の定数と一致する。
         let d = Layout::standard_15_14();
         assert_eq!(d.bass_courses(), BASS_COURSES);
