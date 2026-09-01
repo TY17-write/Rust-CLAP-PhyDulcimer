@@ -651,6 +651,32 @@
   `wake`、`instrument.rs` / `course.rs` のブロックスキップ、回帰は
   `a_fresh_segment_sleeps_until_struck` / `a_decayed_string_falls_back_asleep`
 
+## [D-028] エディタの反映が数秒遅れる — egui-baseview は repaint 要求が無いと描画しない
+
+- **発生フェーズ**: Phase 9 (**DAW の実機確認で発見** — P9 の完了条件が
+  想定したとおり「自動テストでは出ない不具合」だった)
+- **分類**: 不具合
+- **状態**: **修正済み**
+- **症状**: DAW でエディタのボタンを押してから表示に反映されるまで
+  10 秒近く掛かる。音 (DSP) は正常で、CPU も低い。
+- **原因**: `egui-baseview` 0.6 の `on_frame` は毎ティック egui のロジックを
+  回すが、**実際の描画は「repaint 要求の期限が来たとき」だけ**
+  (`repaint_after` のゲート)。マウス入力イベントもロジックを回すだけで
+  描画はトリガしない。当エディタが repaint を要求していたのは打鍵グローの
+  間 (16 ms) だけだったので、それ以外の操作はホバー等が偶発的に repaint を
+  発生させるまで画面に出なかった。
+- **なぜ自動テストで出なかったか**: テストは `Context::run_ui` で 1 フレーム
+  実行するだけで、「次のフレームが描画されるか」は egui-baseview の
+  ゲートの中にあり、ウィンドウを開かないと通らない経路だった。
+- **対応**: `Editor::ui` の先頭で毎フレーム `ctx.request_repaint()` を呼ぶ —
+  プラグイン GUI の定石 (表示中はフレームレートで描き続ける)。
+  エディタを閉じればゼロコスト。グロー用の条件付き 16 ms 要求は不要に
+  なったので削除。
+- **回帰テスト**: `every_frame_requests_a_repaint` — フレーム出力の
+  `repaint_delay` がゼロであることを固定 (要求を出し忘れると即座に落ちる)。
+- **参照**: `phydulcimer-gui/src/editor.rs` の `ui`、
+  egui-baseview 0.6 `window.rs` の `on_frame` (`do_repaint_now` のゲート)
+
 ## [D-015] パラメータの反映がブロック内のイベントに追い越されていた
 
 - **発生フェーズ**: Phase 2

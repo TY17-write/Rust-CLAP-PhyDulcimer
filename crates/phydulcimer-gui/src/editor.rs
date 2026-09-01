@@ -4,8 +4,6 @@
 //! あるのは**画面の状態だけ** (グローの開始時刻、配置表のキャッシュ) で、
 //! 閉じて開き直すと初期値に戻ってよいもの。
 
-use std::time::Duration;
-
 use phydulcimer_core::layout::{Layout, LayoutKind};
 
 use crate::keyboard::{self, KeyboardResponse};
@@ -114,10 +112,15 @@ impl<H: EditorHost> Editor<H> {
         // 同じ見た目になるよう両方に当てる。
         ui.ctx().all_styles_mut(theme::apply);
 
+        // **常時 repaint を要求する** (D-028)。egui-baseview 0.6 は repaint
+        // 要求が無い限り描画しない — 入力イベントでも egui のロジックが回る
+        // だけで画面は描き直されず、クリックの反映が何秒も遅れる (DAW 実機で
+        // 発覚)。エディタ表示中だけのことなので、プラグイン GUI の定石どおり
+        // フレームレートで描き続ける。
+        ui.ctx().request_repaint();
+
         let now = ui.input(|i| i.time);
-        if self.update_glows(now) {
-            ui.ctx().request_repaint_after(Duration::from_millis(16));
-        }
+        self.update_glows(now);
 
         egui::Panel::top("header").show(ui, |ui| {
             self.header(ui);
@@ -490,6 +493,21 @@ mod tests {
     fn run_frame<H: EditorHost>(editor: &mut Editor<H>) {
         let ctx = egui::Context::default();
         let _ = ctx.run_ui(egui::RawInput::default(), |ui| editor.ui(ui));
+    }
+
+    #[test]
+    fn every_frame_requests_a_repaint() {
+        // D-028 の回帰: egui-baseview 0.6 は repaint 要求が無いと描画しない。
+        // 要求を出し忘れると「クリックの反映が何秒も遅れる」形で DAW に出る。
+        let mut editor = Editor::new(FakeHost::new());
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| editor.ui(ui));
+        assert!(
+            output.viewport_output[&egui::ViewportId::ROOT]
+                .repaint_delay
+                .is_zero(),
+            "フレームが次の repaint を要求していない"
+        );
     }
 
     #[test]
