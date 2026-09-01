@@ -266,7 +266,33 @@ pub struct Segment {
     /// 動力学は g = 1 と厳密に同じまま、この打撃の寄与だけが g 倍になる
     /// (バンクは線形なので出力は正確に g 倍)。→ [`Self::set_strike_gain`]
     strike_gain: f64,
+    /// P8: 眠っているか。眠っている間はバンクを回さず 0 を返す。
+    ///
+    /// 起きる条件は 3 つだけ — 打弦 ([`Self::strike_delayed`])・ブリッジ駆動
+    /// (反対区間の撥の接触力の透過)・[`Self::reset`] 後の次の打弦。
+    /// 眠る条件は [`Self::track_activity`] (出力ピークが閾値未満のまま
+    /// 一定時間) 。ダンパーの無い楽器では鳴っている弦は眠らないので、
+    /// これは「まだ一度も叩かれていない / 減衰し切った / choke された」
+    /// 区間だけを止める最適化 (D-027)。
+    asleep: bool,
+    /// 判定窓内の出力ピーク [N]
+    window_peak: Sample,
+    /// 判定窓内のサンプル数
+    window_count: u32,
+    /// 閾値未満だった連続窓数
+    quiet_windows: u32,
 }
+
+/// P8 (D-027): これ未満の出力 [N] は「鳴っていない」とみなす。
+///
+/// 校正値。ff 単音のリンギングは 0.1–1 N 程度で、エンジンの校正
+/// (CALIBRATED_GAIN 5.5e-3 + コースゲイン) を通すと 1e-7 N は
+/// おおむね −140 dBFS — 聴感はもちろん 24-bit のフロアよりも下。
+const SLEEP_THRESHOLD_FORCE: Sample = 1e-7;
+/// 判定窓の長さ [サンプル] (48 kHz で約 21 ms)。
+const SLEEP_WINDOW_SAMPLES: u32 = 1024;
+/// この窓数だけ連続で閾値を下回ったら眠る (約 170 ms のハングオーバー)。
+const SLEEP_AFTER_WINDOWS: u32 = 8;
 
 impl Segment {
     /// 既定は「木の撥・打弦点 0.09・オーバーサンプル 16 倍」。
@@ -298,6 +324,11 @@ impl Segment {
             prev_displacement: 0.0,
             last_hammer_force: 0.0,
             strike_gain: 1.0,
+            // 生まれたばかりの弦は無音 → 最初から眠っている (P8)。
+            asleep: true,
+            window_peak: 0.0,
+            window_count: 0,
+            quiet_windows: 0,
         };
         s.rebuild();
         s
@@ -460,6 +491,7 @@ impl Segment {
         let start = displacement - velocity_mps.max(0.0) * delay_sec.max(0.0);
         self.hammer.strike_at(velocity_mps, start);
         self.prev_displacement = displacement;
+        self.wake();
     }
 
     /// 弦の状態を消す。テストと初期化のためのもので、演奏では使わない。
@@ -468,6 +500,47 @@ impl Segment {
         self.hammer.reset();
         self.prev_displacement = 0.0;
         self.last_hammer_force = 0.0;
+        // 状態を消した弦は無音 → 眠る (P8)。次の打弦かブリッジ駆動で起きる。
+        self.asleep = true;
+        self.window_peak = 0.0;
+        self.window_count = 0;
+        self.quiet_windows = 0;
+    }
+
+    /// 眠っているか (P8 の active スキップ)。検証用。
+    pub fn is_asleep(&self) -> bool {
+        self.asleep
+    }
+
+    /// 起こす (P8)。打弦とブリッジ駆動から呼ばれる。
+    #[inline]
+    fn wake(&mut self) {
+        self.asleep = false;
+        self.window_peak = 0.0;
+        self.window_count = 0;
+        self.quiet_windows = 0;
+    }
+
+    /// 出力ピークを窓ごとに見て、鳴り終わった弦を眠らせる (P8、D-027)。
+    ///
+    /// 撥が動いている間は眠らない (打撃直後の出力が小さい瞬間がある)。
+    #[inline]
+    fn track_activity(&mut self, out: Sample) {
+        self.window_peak = self.window_peak.max(out.abs());
+        self.window_count += 1;
+        if self.window_count < SLEEP_WINDOW_SAMPLES {
+            return;
+        }
+        if self.window_peak < SLEEP_THRESHOLD_FORCE && !self.hammer.is_active() {
+            self.quiet_windows += 1;
+            if self.quiet_windows >= SLEEP_AFTER_WINDOWS {
+                self.asleep = true;
+            }
+        } else {
+            self.quiet_windows = 0;
+        }
+        self.window_peak = 0.0;
+        self.window_count = 0;
     }
 
     /// 1 サンプル進めて、ブリッジに加わる力 [N] を返す。
@@ -485,11 +558,23 @@ impl Segment {
     /// 結合の符号と強さは呼び出し側 ([`course`](crate::course)) が決める。
     #[inline]
     pub fn process_sample_coupled(&mut self, bridge_drive: Sample) -> Sample {
+        // P8: 眠っている区間はバンクを回さない。ブリッジ駆動 (反対区間の
+        // 撥の接触力) が来たら起きる — 起こさず捨てると 5 度の共鳴が消える。
+        if self.asleep {
+            if bridge_drive != 0.0 || self.hammer.is_active() {
+                self.wake();
+            } else {
+                return 0.0;
+            }
+        }
+
         if !self.hammer.is_active() {
             self.last_hammer_force = 0.0;
-            return self
+            let out = self
                 .bank
                 .process_sample_bridged(0.0, bridge_drive, Rate::Base);
+            self.track_activity(out);
+            return out;
         }
 
         let dt_os = 1.0 / (self.sample_rate * self.oversample as f64);
@@ -520,10 +605,12 @@ impl Segment {
         // 反対区間への透過 (course) も g 倍された力を見る (共鳴も揃って動く)。
         self.last_hammer_force = (force_acc * self.strike_gain / self.oversample as f64) as Sample;
 
-        match self.decimation {
+        let out = match self.decimation {
             Decimation::Drop => last,
             Decimation::Average => acc / self.oversample as Sample,
-        }
+        };
+        self.track_activity(out);
+        out
     }
 
     /// 直近サンプルの撥の接触力 [N] (サブサンプル平均)。接触が無ければ 0。
@@ -958,6 +1045,49 @@ mod tests {
             high / low
         };
         assert!(ratio(6.0) > ratio(0.5));
+    }
+
+    #[test]
+    fn a_fresh_segment_sleeps_until_struck() {
+        // P8 (D-027): 一度も叩かれていない弦は眠っていて、出力は厳密に 0
+        // (デノーマル対策の DC すら出ない)。打弦で起き、reset で再び眠る。
+        let mut seg = segment();
+        assert!(seg.is_asleep(), "生まれたばかりの弦が起きている");
+        for _ in 0..2_000 {
+            assert_eq!(seg.process_sample(), 0.0);
+        }
+        assert!(seg.is_asleep());
+
+        seg.strike(2.0);
+        assert!(!seg.is_asleep(), "打弦で起きていない");
+        let x = render_more(&mut seg, 0.2);
+        assert!(x.iter().any(|&v| v != 0.0), "起きたのに音が出ていない");
+
+        seg.reset();
+        assert!(seg.is_asleep(), "reset で眠っていない");
+    }
+
+    #[test]
+    fn a_decayed_string_falls_back_asleep() {
+        // P8 (D-027): 鳴り終わった弦は眠りに戻る。素の減衰では時間が掛かる
+        // ので、フルミュートで減衰を速めてテストを短くする。
+        let mut seg = segment();
+        seg.strike(2.0);
+        seg.set_mute(1.0);
+        render_more(&mut seg, 2.5);
+        assert!(seg.is_asleep(), "減衰し切った弦が眠っていない");
+        // 眠った後の出力は厳密に 0。
+        for _ in 0..1_000 {
+            assert_eq!(seg.process_sample(), 0.0);
+        }
+    }
+
+    /// 打弦せずに追加でレンダリングする (スリープ検証用)。
+    fn render_more(seg: &mut Segment, seconds: f64) -> Vec<Sample> {
+        let n = (SR * seconds) as usize;
+        let mut out = vec![0.0 as Sample; n];
+        seg.process_block(&mut out);
+        out
     }
 
     #[test]

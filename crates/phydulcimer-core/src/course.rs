@@ -170,6 +170,14 @@ impl TrebleString {
     pub fn any_hammer_active(&self) -> bool {
         self.right.hammer().is_active() || self.left.hammer().is_active()
     }
+
+    /// 両区間とも眠っているか (P8)。
+    ///
+    /// 眠っている間は互いへのブリッジ駆動も 0 なので、弦ごとブロックを
+    /// 飛ばしてよい (起きる契機は打弦だけで、それはブロック処理の外で起きる)。
+    pub fn is_asleep(&self) -> bool {
+        self.right.is_asleep() && self.left.is_asleep()
+    }
 }
 
 /// 打撃時刻のばらつきの上限 [s]。実機のハンマーは 2 本を完全同時には叩かない。
@@ -346,9 +354,10 @@ mod tests {
             rms_points.push(rms);
         }
         assert!(s.is_finite(), "非有限値が出た");
+        // P8: 減衰し切って眠った後は厳密に 0 なので、等号 (0 == 0) を許す。
         for w in rms_points.windows(2).skip(1) {
             assert!(
-                w[1] < w[0] * 1.02,
+                w[1] < w[0] * 1.02 || w[1] == 0.0,
                 "エネルギーが減っていない: {rms_points:?}"
             );
         }

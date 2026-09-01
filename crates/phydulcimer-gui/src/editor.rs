@@ -298,16 +298,18 @@ impl<H: EditorHost> Editor<H> {
 
     fn keys_panel(&mut self, ui: &mut egui::Ui, now: f64) {
         ui.horizontal(|ui| {
-            let (range, count) = if self.host.active_layout() >= 1 {
-                ("E3 - E6", 37)
-            } else {
-                ("G2 - D6", 27)
-            };
-            ui.label(
-                egui::RichText::new(format!("KEYS - {range} - {count} NOTES"))
-                    .color(theme::DIM)
-                    .small(),
+            // 範囲と音数は配置表から導く (ハードコードすると配置の拡張で
+            // 必ずドリフトする — 低音弦ブロック追加時に実害)。
+            let layout = self.active_layout();
+            let (lo, hi) = (layout.key_min(), layout.key_max());
+            let count = (lo..=hi).filter(|&k| layout.is_mapped(k)).count();
+            let label = format!(
+                "KEYS - {} - {} - {} NOTES",
+                phydulcimer_core::layout::note_name(lo),
+                phydulcimer_core::layout::note_name(hi),
+                count
             );
+            ui.label(egui::RichText::new(label).color(theme::DIM).small());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 self.legend(ui);
             });

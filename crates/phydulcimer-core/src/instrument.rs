@@ -314,9 +314,14 @@ impl Instrument {
         // トレブルの右左の結合は TrebleString の中でサンプル単位に閉じている。
         // コースゲイン (音域バランス) は出力の加算時にだけ掛ける — 励振・結合・
         // 減衰の物理はゲインの外に置く。
+        // P8: 眠っている弦はブロックごと飛ばす (起きる契機は note_on だけで、
+        // それはブロック処理の外で起きる)。
         for c in &mut self.bass {
             let gain = c.gain;
             for seg in &mut c.strings {
+                if seg.is_asleep() {
+                    continue;
+                }
                 for s in out.iter_mut() {
                     *s += gain * seg.process_sample();
                 }
@@ -325,6 +330,9 @@ impl Instrument {
         for c in &mut self.treble {
             let gain = c.gain;
             for string in &mut c.strings {
+                if string.is_asleep() {
+                    continue;
+                }
                 for s in out.iter_mut() {
                     *s += gain * string.process_sample();
                 }
@@ -345,9 +353,13 @@ impl Instrument {
         bass_out.fill(0.0);
         treble_out.fill(0.0);
 
+        // P8: 眠っている弦はブロックごと飛ばす (process と同じ)。
         for c in &mut self.bass {
             let gain = c.gain;
             for seg in &mut c.strings {
+                if seg.is_asleep() {
+                    continue;
+                }
                 for s in bass_out.iter_mut() {
                     *s += gain * seg.process_sample();
                 }
@@ -356,6 +368,9 @@ impl Instrument {
         for c in &mut self.treble {
             let gain = c.gain;
             for string in &mut c.strings {
+                if string.is_asleep() {
+                    continue;
+                }
                 for s in treble_out.iter_mut() {
                     *s += gain * string.process_sample();
                 }
@@ -818,9 +833,11 @@ mod tests {
         }
         assert!(inst.is_finite(), "60 秒で非有限値が出た");
         // 最初の窓は打撃の過渡を含むので 2 点目から見る。
+        // P8 の active スキップで減衰し切った弦は厳密に 0 を出すので、
+        // 0 に達した後の窓は等号 (0 == 0) を許す。
         for w in rms_points.windows(2).skip(1) {
             assert!(
-                w[1] < w[0] * 1.01,
+                w[1] < w[0] * 1.01 || w[1] == 0.0,
                 "エネルギーが減っていない: {rms_points:?}"
             );
         }

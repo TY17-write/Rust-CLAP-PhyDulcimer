@@ -94,12 +94,29 @@ fn bench_instrument(c: &mut Criterion) {
         });
     });
 
-    // 参考: 無音 (全弦が静止) のコスト。active スキップを入れる前の基準。
+    // 参考: 無音 (全弦が静止) のコスト。P8 の active スキップの効果を測る。
     group.bench_function("silent/block64", |b| {
         let mut inst = Instrument::new(SR);
         let mut buf = [0.0f32; BLOCK];
         b.iter(|| {
             std::hint::black_box(inst.process(&mut buf));
+        });
+    });
+
+    // 無音の半音階エンジン (エディタを開いたまま何も弾いていない状態の写し —
+    // D-025 の「開いている間は Continue」でこのコストが常時掛かる)。
+    group.bench_function("engine/chromatic61-silent/block64", |b| {
+        use phydulcimer_core::instrument::InstrumentConfig;
+        use phydulcimer_core::layout::LayoutKind;
+        let config = InstrumentConfig {
+            layout: LayoutKind::Chromatic,
+            ..InstrumentConfig::default()
+        };
+        let mut engine = DulcimerEngine::with_config(SR, BLOCK, config);
+        let mut l = [0.0f32; BLOCK];
+        let mut r = [0.0f32; BLOCK];
+        b.iter(|| {
+            std::hint::black_box(engine.process_stereo(&mut l, &mut r));
         });
     });
 
